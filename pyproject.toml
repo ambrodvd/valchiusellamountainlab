@@ -1,11 +1,14 @@
 [project]
-name = "blank-app-template"
+name = "vml-prenotazioni"
 version = "0.1.0"
-description = "A simple Streamlit app template."
+description = "Prenotazione appuntamenti - Valchiusella Mountain Lab"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
-    "streamlit>=1.61.1",
+    "google-auth>=2.57.1",
+    "gspread>=6.2.1",
+    "pandas>=2.2",
+    "streamlit>=1.41",
 ]
 
 [tool.uv]

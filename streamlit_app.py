@@ -1,6 +1,13 @@
 import streamlit as st
 
-st.title("🎈 My new app")
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
+st.set_page_config(
+    page_title="Valchiusella Mountain Lab",
+    page_icon="🏔️",
+    layout="centered",
+    initial_sidebar_state="collapsed",
 )
+
+prenota = st.Page("Prenota.py", title="Prenota", icon="🏔️", default=True)
+admin = st.Page("Admin.py", title="Gestione", icon="🔒")
+
+st.navigation([prenota, admin]).run()

@@ -36,7 +36,7 @@ def _send(to: str, subject: str, body: str) -> None:
 
 def send_confirmation(
     to: str, name: str, title: str, date_str: str, time_str: str,
-    ref: str, location: str = "", duration_min: int = 0,
+    ref: str, coach: str = "", location: str = "", duration_min: int = 0,
     price_eur: float = 0.0, payment_link: str = "", description: str = "",
 ) -> None:
     cfg = _cfg()
@@ -58,9 +58,11 @@ def send_confirmation(
 
     extra = f"\n{description.strip()}\n" if description.strip() else ""
 
+    con_chi = f" con {coach.strip()}" if coach.strip() else ""
+
     body = f"""Ciao {name},
 
-ti confermiamo la prenotazione per {title} del {date_str} alle {time_str}{durata}.
+ti confermo l'appuntamento per {title}{con_chi} del {date_str} alle {time_str}{durata}.
 
 {dove}
 {extra}
@@ -68,11 +70,12 @@ ti confermiamo la prenotazione per {title} del {date_str} alle {time_str}{durata
 
 Codice appuntamento: {ref}
 
-A presto,
+Se poi non riesci a venire scrivimi rispondendo qui, cosi' libero lo slot per qualcun altro.
 
-Davide
+A presto,
+{lab}
 """
-    _send(to, f"Prenotazione confermata", body)
+    _send(to, f"Appuntamento confermato - {title}, {date_str}", body)
 
 
 def send_cancellation(

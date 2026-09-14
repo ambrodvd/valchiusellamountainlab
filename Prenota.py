@@ -8,7 +8,7 @@ import data
 import mailer
 
 st.set_page_config(
-    page_title="Prenota un appuntamento", page_icon="🏔️", layout="centered"
+    page_title="Prenota un appuntamento", layout="centered"
 )
 
 # --- logo ---
@@ -25,7 +25,7 @@ if LOGO.exists():
     _, center, _ = st.columns([1, 2, 1])
     center.image(str(LOGO), use_container_width=True)
 
-st.title("🏔️ Prenota un appuntamento")
+st.title("Prenota un appuntamento")
 
 try:
     categories = data.load_categories()
@@ -108,10 +108,11 @@ GIORNI = {
 
 def etichetta(row) -> str:
     giorno = GIORNI[row.date.weekday()]
+    coach = f" con {row.coach}" if str(row.coach).strip() else ""
     prezzo = f" — € {row.price_eur:.0f}" if row.price_eur else ""
     stato = "" if row.capacity == 1 else f"  ·  _{row.free} posti_"
     return (
-        f"**{row.name}** — {giorno} {row.date.strftime('%d/%m/%Y')}, "
+        f"**{row.name}**{coach} — {giorno} {row.date.strftime('%d/%m/%Y')}, "
         f"ore {row.time}{prezzo}{stato}"
     )
 
@@ -139,6 +140,8 @@ if choice.description:
     st.markdown(choice.description)
 
 dettagli = []
+if str(choice.coach).strip():
+    dettagli.append(f"Con {choice.coach}")
 if choice.duration_min:
     dettagli.append(f"Durata: circa {int(choice.duration_min)} minuti")
 if choice.price_eur:
@@ -208,6 +211,7 @@ if submitted:
                         date_str=choice.date.strftime("%d/%m/%Y"),
                         time_str=choice.time,
                         ref=ref,
+                        coach=choice.coach,
                         location=choice.location,
                         duration_min=int(choice.duration_min or 0),
                         price_eur=float(choice.price_eur or 0),

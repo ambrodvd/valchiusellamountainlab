@@ -13,8 +13,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
+DEFAULT_LOCATION = "Valchiusella Mountain Lab -  Via delle miniere 3 - Traversella"
+
 CATEGORY_COLUMNS = [
-    "category_id", "name", "location", "duration_min",
+    "category_id", "name", "coach", "location", "duration_min",
     "price_eur", "payment_link", "description",
 ]
 
@@ -51,7 +53,7 @@ def clear_all_caches() -> None:
 
 
 # =============================================================
-# CATEGORIE (tipi di appuntamento)
+# CATEGORIE (tipi di test)
 # =============================================================
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -63,13 +65,34 @@ def load_categories() -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
     df["category_id"] = df["category_id"].astype(str)
-    for col in ("name", "location", "payment_link", "description"):
+    for col in ("name", "coach", "payment_link", "description"):
         df[col] = df[col].astype(str).fillna("")
+    df["location"] = (
+        df["location"].astype(str).fillna("").replace("", DEFAULT_LOCATION)
+    )
     df["duration_min"] = (
         pd.to_numeric(df["duration_min"], errors="coerce").fillna(60).astype(int)
     )
     df["price_eur"] = pd.to_numeric(df["price_eur"], errors="coerce").fillna(0.0)
     return df[CATEGORY_COLUMNS]
+
+
+def coach_list(categories: pd.DataFrame) -> list[str]:
+    """Allenatori già usati, per il completamento nei form."""
+    if categories.empty:
+        return []
+    return sorted({c.strip() for c in categories["coach"] if str(c).strip()})
+
+
+def payment_link_for_coach(categories: pd.DataFrame, coach: str) -> str:
+    """Ultimo link di pagamento noto per quell'allenatore."""
+    if categories.empty or not str(coach).strip():
+        return ""
+    righe = categories[
+        (categories["coach"].str.strip().str.lower() == str(coach).strip().lower())
+        & (categories["payment_link"].str.strip() != "")
+    ]
+    return "" if righe.empty else str(righe.iloc[-1]["payment_link"]).strip()
 
 
 def next_category_id() -> str:
@@ -83,13 +106,14 @@ def next_category_id() -> str:
 
 
 def add_category(
-    name: str, location: str, duration_min: int,
+    name: str, coach: str, location: str, duration_min: int,
     price_eur: float, payment_link: str, description: str = "",
 ) -> str:
     category_id = next_category_id()
     _sheet("categories").append_row(
         [
-            category_id, name.strip(), location.strip(), int(duration_min),
+            category_id, name.strip(), coach.strip(),
+            location.strip() or DEFAULT_LOCATION, int(duration_min),
             float(price_eur), payment_link.strip(), description.strip(),
         ],
         value_input_option="USER_ENTERED",
@@ -99,7 +123,7 @@ def add_category(
 
 
 def update_category(
-    category_id: str, name: str, location: str, duration_min: int,
+    category_id: str, name: str, coach: str, location: str, duration_min: int,
     price_eur: float, payment_link: str, description: str = "",
 ) -> bool:
     ws = _sheet("categories")
@@ -107,9 +131,10 @@ def update_category(
     if cell is None or cell.col != 1:
         return False
     ws.update(
-        f"A{cell.row}:G{cell.row}",
+        f"A{cell.row}:H{cell.row}",
         [[
-            str(category_id), name.strip(), location.strip(), int(duration_min),
+            str(category_id), name.strip(), coach.strip(),
+            location.strip() or DEFAULT_LOCATION, int(duration_min),
             float(price_eur), payment_link.strip(), description.strip(),
         ]],
         value_input_option="USER_ENTERED",
@@ -293,6 +318,29 @@ def set_paid(booking_id: str, paid: bool = True) -> bool:
     return True
 
 
+def set_paid_bulk(changes: dict) -> int:
+    """changes: {booking_id: bool}. Ritorna quante righe sono state aggiornate."""
+    if not changes:
+        return 0
+    ws = _sheet("bookings")
+    col = BOOKING_COLUMNS.index("paid") + 1
+    records = ws.get_all_records()
+
+    aggiornamenti = []
+    for i, r in enumerate(records, start=2):   # riga 1 = intestazioni
+        bid = str(r.get("booking_id", "")).strip().upper()
+        if bid in changes:
+            aggiornamenti.append({
+                "range": gspread.utils.rowcol_to_a1(i, col),
+                "values": [["si" if changes[bid] else "no"]],
+            })
+
+    if aggiornamenti:
+        ws.batch_update(aggiornamenti, value_input_option="USER_ENTERED")
+        load_bookings.clear()
+    return len(aggiornamenti)
+
+
 # =============================================================
 # VISTE COMPOSTE
 # =============================================================
@@ -301,17 +349,17 @@ def slots_with_category(
     slots: pd.DataFrame, categories: pd.DataFrame
 ) -> pd.DataFrame:
     """Unisce gli slot ai dati della loro categoria."""
+    extra = [
+        "name", "coach", "location", "duration_min",
+        "price_eur", "payment_link", "description",
+    ]
     if slots.empty:
-        return pd.DataFrame(
-            columns=SLOT_COLUMNS + [
-                "name", "location", "duration_min", "price_eur", "payment_link",
-                "description",
-            ]
-        )
+        return pd.DataFrame(columns=SLOT_COLUMNS + extra)
     if categories.empty:
         out = slots.copy()
         out["name"] = "Appuntamento"
-        out["location"] = ""
+        out["coach"] = ""
+        out["location"] = DEFAULT_LOCATION
         out["duration_min"] = 60
         out["price_eur"] = 0.0
         out["payment_link"] = ""
@@ -319,7 +367,8 @@ def slots_with_category(
         return out
     return slots.merge(categories, on="category_id", how="left").fillna({
         "name": "Appuntamento",
-        "location": "",
+        "coach": "",
+        "location": DEFAULT_LOCATION,
         "duration_min": 60,
         "price_eur": 0.0,
         "payment_link": "",

@@ -29,134 +29,9 @@ categories = data.load_categories()
 slots = data.load_slots()
 bookings = data.load_bookings()
 
-tab_tipi, tab_cal, tab_pren = st.tabs(
-    ["Tipi di appuntamento", "Calendario", "Prenotazioni"]
+tab_cal, tab_pren, tab_tipi = st.tabs(
+    ["Calendario", "Prenotazioni", "Categorie test"]
 )
-
-# =============================================================
-# TIPI DI APPUNTAMENTO
-# =============================================================
-with tab_tipi:
-    st.subheader("Crea un tipo di appuntamento")
-    st.caption(
-        "Definisci una volta nome, luogo, durata, prezzo e link di pagamento; "
-        "poi apri gli slot nel calendario scegliendo il tipo."
-    )
-
-    with st.form("nuovo_tipo"):
-        t_name = st.text_input("Nome", placeholder="es. Test cardiopolmonare (CPET)")
-        t_location = st.text_input(
-            "Luogo", placeholder="Valchiusella Mountain Lab, Via ..."
-        )
-        c1, c2 = st.columns(2)
-        t_duration = c1.number_input(
-            "Durata (minuti)", min_value=5, max_value=480, value=60, step=5
-        )
-        t_price = c2.number_input(
-            "Prezzo €", min_value=0.0, value=120.0, step=5.0
-        )
-        t_link = st.text_input(
-            "Link di pagamento", placeholder="https://buy.stripe.com/..."
-        )
-        t_desc = st.text_area(
-            "Descrizione (facoltativa)",
-            placeholder="Cosa portare, come presentarsi, a chi è rivolto...",
-        )
-        crea = st.form_submit_button("Crea tipo", type="primary")
-
-    if crea:
-        if not t_name.strip():
-            st.error("Il nome è obbligatorio.")
-        elif t_link.strip() and not t_link.strip().startswith("http"):
-            st.error("Il link di pagamento deve iniziare con http.")
-        else:
-            cid = data.add_category(
-                name=t_name,
-                location=t_location,
-                duration_min=int(t_duration),
-                price_eur=float(t_price),
-                payment_link=t_link,
-                description=t_desc,
-            )
-            st.success(f"Tipo {cid} creato.")
-            st.rerun()
-
-    st.divider()
-    st.subheader("Tipi esistenti")
-
-    if categories.empty:
-        st.info("Nessun tipo. Creane uno qui sopra per iniziare.")
-    else:
-        st.dataframe(categories, use_container_width=True, hide_index=True)
-
-        def _label_cat(cid: str) -> str:
-            nome = categories.loc[categories["category_id"] == cid, "name"].iloc[0]
-            return f"{cid} · {nome}"
-
-        st.markdown("**Modifica un tipo**")
-        cid_sel = st.selectbox(
-            "Tipo",
-            options=list(categories["category_id"]),
-            format_func=_label_cat,
-            key="cat_edit_sel",
-        )
-        row = categories[categories["category_id"] == cid_sel].iloc[0]
-
-        with st.form("modifica_tipo"):
-            e_name = st.text_input("Nome", value=row["name"], key="cat_e_name")
-            e_location = st.text_input(
-                "Luogo", value=row["location"], key="cat_e_location"
-            )
-            d1, d2 = st.columns(2)
-            e_duration = d1.number_input(
-                "Durata (minuti)", min_value=5, max_value=480,
-                value=int(row["duration_min"]) or 60, step=5, key="cat_e_dur",
-            )
-            e_price = d2.number_input(
-                "Prezzo €", min_value=0.0, value=float(row["price_eur"]),
-                step=5.0, key="cat_e_price",
-            )
-            e_link = st.text_input(
-                "Link di pagamento", value=row["payment_link"], key="cat_e_link"
-            )
-            e_desc = st.text_area(
-                "Descrizione", value=row["description"], key="cat_e_desc"
-            )
-            salva = st.form_submit_button("Salva modifiche")
-
-        if salva:
-            if data.update_category(
-                category_id=cid_sel,
-                name=e_name,
-                location=e_location,
-                duration_min=int(e_duration),
-                price_eur=float(e_price),
-                payment_link=e_link,
-                description=e_desc,
-            ):
-                st.success("Tipo aggiornato.")
-                st.caption(
-                    "La modifica vale subito per tutti gli slot di questo tipo, "
-                    "anche quelli già pubblicati."
-                )
-                st.rerun()
-            else:
-                st.error("Tipo non trovato.")
-
-        st.markdown("**Elimina un tipo**")
-        cid_del = st.selectbox(
-            "Tipo da eliminare",
-            options=list(categories["category_id"]),
-            format_func=_label_cat,
-            key="cat_del_sel",
-        )
-        ok_del = st.checkbox("Confermo", key="cat_del_ok")
-        if st.button("Elimina tipo", key="cat_del_btn") and ok_del:
-            if data.delete_category(cid_del):
-                st.success(f"{cid_del} eliminato.")
-                st.rerun()
-            else:
-                st.error("Tipo non trovato.")
 
 # =============================================================
 # CALENDARIO
@@ -165,15 +40,19 @@ with tab_cal:
     st.subheader("Apri nuovi slot")
 
     if categories.empty:
-        st.warning("Crea prima almeno un tipo di appuntamento.")
+        st.warning("Crea prima almeno una categoria di test.")
     else:
         def _label_cat_new(cid: str) -> str:
             r = categories[categories["category_id"] == cid].iloc[0]
-            return f"{r['name']} · {int(r['duration_min'])} min · € {r['price_eur']:.0f}"
+            coach = f" · {r['coach']}" if str(r["coach"]).strip() else ""
+            return (
+                f"{r['name']}{coach} · {int(r['duration_min'])} min "
+                f"· € {r['price_eur']:.0f}"
+            )
 
         with st.form("nuovi_slot"):
             s_cat = st.selectbox(
-                "Tipo di appuntamento",
+                "Tipo di test",
                 options=list(categories["category_id"]),
                 format_func=_label_cat_new,
                 key="slot_cat",
@@ -247,7 +126,7 @@ with tab_cal:
 
         st.dataframe(
             vista_slot[[
-                "slot_id", "date", "time", "name", "capacity",
+                "slot_id", "date", "time", "name", "coach", "capacity",
                 "prenotati", "liberi", "note",
             ]],
             use_container_width=True,
@@ -288,6 +167,7 @@ with tab_pren:
         merged = bookings.merge(base, on="slot_id", how="left")
         merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
         merged = merged.sort_values(["date", "time", "timestamp"], na_position="last")
+        merged = merged.rename(columns={"name_x": "cliente", "name_y": "test"})
         active = merged[merged["status"] != "cancelled"]
         oggi = pd.Timestamp(date.today())
 
@@ -304,15 +184,119 @@ with tab_pren:
         )
         c4.metric("Da incassare", f"€ {da_incassare:,.2f}")
 
+        # ---------- pagamenti ----------
+        st.divider()
+        st.subheader("Pagamenti")
+
+        def _tabella_pagamenti(df: pd.DataFrame, chiave: str) -> pd.DataFrame:
+            return pd.DataFrame({
+                "seleziona": [False] * len(df),
+                "codice": df["booking_id"].values,
+                "giorno": [
+                    d.strftime("%d/%m/%Y") if pd.notna(d) else ""
+                    for d in df["date"]
+                ],
+                "ora": df["time"].fillna("").values,
+                "cliente": df["cliente"].fillna("").values,
+                "test": df["test"].fillna("").values,
+                "coach": df["coach"].fillna("").values,
+                "importo": df["price_eur"].fillna(0.0).values,
+            })
+
+        _config = {
+            "seleziona": st.column_config.CheckboxColumn("✓"),
+            "importo": st.column_config.NumberColumn("Importo", format="€ %.2f"),
+        }
+        _bloccate = [
+            "codice", "giorno", "ora", "cliente", "test", "coach", "importo",
+        ]
+
+        if active.empty:
+            st.info("Nessuna prenotazione attiva.")
+        else:
+            da_pagare = active[active["paid"] != "si"]
+            pagati = active[active["paid"] == "si"]
+
+            # ----- non pagati -----
+            st.markdown(f"**Da incassare ({len(da_pagare)})**")
+
+            if da_pagare.empty:
+                st.success("Tutto incassato.")
+            else:
+                tab_np = _tabella_pagamenti(da_pagare, "np")
+                mod_np = st.data_editor(
+                    tab_np,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="ed_non_pagati",
+                    column_config=_config,
+                    disabled=_bloccate,
+                )
+                scelti_np = [
+                    str(mod_np.loc[i, "codice"]).upper()
+                    for i in mod_np.index
+                    if bool(mod_np.loc[i, "seleziona"])
+                ]
+                b1, b2 = st.columns([1, 3])
+                if b1.button(
+                    "Segna come pagati", type="primary",
+                    key="btn_segna_pagati", disabled=not scelti_np,
+                ):
+                    n = data.set_paid_bulk({c: True for c in scelti_np})
+                    st.success(f"{n} prenotazioni segnate come pagate.")
+                    st.rerun()
+                if scelti_np:
+                    totale = float(
+                        da_pagare[da_pagare["booking_id"].isin(scelti_np)][
+                            "price_eur"
+                        ].sum()
+                    )
+                    b2.caption(
+                        f"{len(scelti_np)} selezionate · € {totale:,.2f}"
+                    )
+
+            # ----- pagati -----
+            st.markdown(f"**Già pagati ({len(pagati)})**")
+
+            if pagati.empty:
+                st.caption("Nessun pagamento registrato.")
+            else:
+                tab_p = _tabella_pagamenti(pagati, "p")
+                mod_p = st.data_editor(
+                    tab_p,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="ed_pagati",
+                    column_config=_config,
+                    disabled=_bloccate,
+                )
+                scelti_p = [
+                    str(mod_p.loc[i, "codice"]).upper()
+                    for i in mod_p.index
+                    if bool(mod_p.loc[i, "seleziona"])
+                ]
+                b3, b4 = st.columns([1, 3])
+                if b3.button(
+                    "Togli dai pagati", key="btn_togli_pagati",
+                    disabled=not scelti_p,
+                ):
+                    n = data.set_paid_bulk({c: False for c in scelti_p})
+                    st.success(f"{n} prenotazioni riportate fra i non pagati.")
+                    st.rerun()
+                if scelti_p:
+                    b4.caption(f"{len(scelti_p)} selezionate.")
+
+        # ---------- elenco completo ----------
+        st.divider()
+        st.subheader("Tutte le prenotazioni")
+
         colonne = [
             c for c in [
-                "booking_id", "date", "time", "name_y", "name_x", "email",
-                "phone", "paid", "status", "timestamp",
+                "booking_id", "date", "time", "test", "coach", "cliente",
+                "email", "phone", "paid", "status", "timestamp",
             ] if c in merged.columns
         ]
-        tabella = merged[colonne].rename(
-            columns={"name_y": "appuntamento", "name_x": "cliente"}
-        )
+        tabella = merged[colonne]
         st.dataframe(tabella, use_container_width=True, hide_index=True)
         st.download_button(
             "Scarica prenotazioni CSV",
@@ -322,49 +306,198 @@ with tab_pren:
             key="dl_pren",
         )
 
-        st.divider()
-        st.subheader("Segna come pagato")
-        ref_pay = st.text_input("Codice appuntamento", key="pay_ref")
-        cp1, cp2 = st.columns(2)
-        if cp1.button("Segna pagato", key="pay_si") and ref_pay.strip():
-            if data.set_paid(ref_pay.strip().upper(), True):
-                st.success("Aggiornato.")
-                st.rerun()
-            else:
-                st.error("Codice non trovato.")
-        if cp2.button("Togli pagato", key="pay_no") and ref_pay.strip():
-            if data.set_paid(ref_pay.strip().upper(), False):
-                st.success("Aggiornato.")
-                st.rerun()
-            else:
-                st.error("Codice non trovato.")
-
+        # ---------- annullamento ----------
         st.divider()
         st.subheader("Annulla una prenotazione")
-        ref = st.text_input("Codice prenotazione", key="pren_ref")
-        avvisa = st.checkbox(
-            "Invia email di annullamento", value=True, key="pren_avvisa"
+
+        if active.empty:
+            st.info("Niente da annullare.")
+        else:
+            def _label_pren(bid: str) -> str:
+                r = active[active["booking_id"] == bid].iloc[0]
+                giorno = (
+                    r["date"].strftime("%d/%m/%Y") if pd.notna(r["date"]) else "—"
+                )
+                return f"{bid} · {r['cliente']} · {giorno} {r['time']}"
+
+            code = st.selectbox(
+                "Prenotazione",
+                options=list(active["booking_id"]),
+                format_func=_label_pren,
+                key="pren_sel",
+            )
+            avvisa = st.checkbox(
+                "Invia email di annullamento", value=True, key="pren_avvisa"
+            )
+            if st.button("Annulla", type="primary", key="pren_btn"):
+                row = merged[merged["booking_id"] == code]
+                if data.cancel_booking(code):
+                    st.success(f"{code} annullata.")
+                    if avvisa and not row.empty:
+                        r = row.iloc[0]
+                        try:
+                            mailer.send_cancellation(
+                                to=r["email"],
+                                name=r.get("cliente", ""),
+                                title=r.get("test", ""),
+                                date_str=(
+                                    r["date"].strftime("%d/%m/%Y")
+                                    if pd.notna(r.get("date")) else ""
+                                ),
+                                time_str=r.get("time", ""),
+                            )
+                        except Exception:
+                            st.warning("Annullata, ma l'email non è partita.")
+                    st.rerun()
+                else:
+                    st.error("Codice non trovato.")
+
+# =============================================================
+# CATEGORIE TEST
+# =============================================================
+with tab_tipi:
+    st.subheader("Crea una categoria di test")
+    st.caption(
+        "Definisci una volta nome, allenatore, luogo, durata, prezzo e link di "
+        "pagamento; poi apri gli slot nel calendario scegliendo la categoria."
+    )
+
+    coaches = data.coach_list(categories)
+
+    with st.form("nuovo_tipo"):
+        t_name = st.text_input("Nome", placeholder="es. Test cardiopolmonare (CPET)")
+        t_coach = st.text_input(
+            "Allenatore",
+            placeholder="Nome e cognome",
+            help=(
+                "Allenatori già inseriti: " + ", ".join(coaches)
+                if coaches else "Il primo allenatore che inserisci"
+            ),
         )
-        if st.button("Annulla", type="primary", key="pren_btn") and ref.strip():
-            code = ref.strip().upper()
-            row = merged[merged["booking_id"] == code]
-            if data.cancel_booking(code):
-                st.success(f"{code} annullata.")
-                if avvisa and not row.empty:
-                    r = row.iloc[0]
-                    try:
-                        mailer.send_cancellation(
-                            to=r["email"],
-                            name=r.get("name_x", ""),
-                            title=r.get("name_y", ""),
-                            date_str=(
-                                r["date"].strftime("%d/%m/%Y")
-                                if pd.notna(r.get("date")) else ""
-                            ),
-                            time_str=r.get("time", ""),
-                        )
-                    except Exception:
-                        st.warning("Annullata, ma l'email non è partita.")
+        t_location = st.text_input("Luogo", value=data.DEFAULT_LOCATION)
+        c1, c2 = st.columns(2)
+        t_duration = c1.number_input(
+            "Durata (minuti)", min_value=5, max_value=480, value=60, step=5
+        )
+        t_price = c2.number_input(
+            "Prezzo €", min_value=0.0, value=120.0, step=5.0
+        )
+        t_link = st.text_input(
+            "Link di pagamento dell'allenatore",
+            placeholder="https://buy.stripe.com/...",
+        )
+        t_desc = st.text_area(
+            "Descrizione (facoltativa)",
+            placeholder="Cosa portare, come presentarsi, a chi è rivolto...",
+        )
+        crea = st.form_submit_button("Crea categoria", type="primary")
+
+    if crea:
+        link = t_link.strip() or data.payment_link_for_coach(categories, t_coach)
+        if not t_name.strip():
+            st.error("Il nome è obbligatorio.")
+        elif not t_coach.strip():
+            st.error("L'allenatore è obbligatorio.")
+        elif link and not link.startswith("http"):
+            st.error("Il link di pagamento deve iniziare con http.")
+        else:
+            cid = data.add_category(
+                name=t_name,
+                coach=t_coach,
+                location=t_location,
+                duration_min=int(t_duration),
+                price_eur=float(t_price),
+                payment_link=link,
+                description=t_desc,
+            )
+            st.success(f"Categoria {cid} creata.")
+            if not t_link.strip() and link:
+                st.caption(f"Ho riusato il link già noto per {t_coach.strip()}.")
+            st.rerun()
+
+    st.divider()
+    st.subheader("Categorie esistenti")
+
+    if categories.empty:
+        st.info("Nessuna categoria. Creane una qui sopra per iniziare.")
+    else:
+        st.dataframe(categories, use_container_width=True, hide_index=True)
+
+        def _label_cat(cid: str) -> str:
+            r = categories[categories["category_id"] == cid].iloc[0]
+            coach = f" · {r['coach']}" if str(r["coach"]).strip() else ""
+            return f"{cid} · {r['name']}{coach}"
+
+        st.markdown("**Modifica una categoria**")
+        cid_sel = st.selectbox(
+            "Categoria",
+            options=list(categories["category_id"]),
+            format_func=_label_cat,
+            key="cat_edit_sel",
+        )
+        row = categories[categories["category_id"] == cid_sel].iloc[0]
+
+        with st.form("modifica_tipo"):
+            e_name = st.text_input("Nome", value=row["name"], key="cat_e_name")
+            e_coach = st.text_input(
+                "Allenatore", value=row["coach"], key="cat_e_coach"
+            )
+            e_location = st.text_input(
+                "Luogo",
+                value=row["location"] or data.DEFAULT_LOCATION,
+                key="cat_e_location",
+            )
+            d1, d2 = st.columns(2)
+            e_duration = d1.number_input(
+                "Durata (minuti)", min_value=5, max_value=480,
+                value=int(row["duration_min"]) or 60, step=5, key="cat_e_dur",
+            )
+            e_price = d2.number_input(
+                "Prezzo €", min_value=0.0, value=float(row["price_eur"]),
+                step=5.0, key="cat_e_price",
+            )
+            e_link = st.text_input(
+                "Link di pagamento dell'allenatore",
+                value=row["payment_link"], key="cat_e_link",
+            )
+            e_desc = st.text_area(
+                "Descrizione", value=row["description"], key="cat_e_desc"
+            )
+            salva = st.form_submit_button("Salva modifiche")
+
+        if salva:
+            if not e_coach.strip():
+                st.error("L'allenatore è obbligatorio.")
+            elif data.update_category(
+                category_id=cid_sel,
+                name=e_name,
+                coach=e_coach,
+                location=e_location,
+                duration_min=int(e_duration),
+                price_eur=float(e_price),
+                payment_link=e_link,
+                description=e_desc,
+            ):
+                st.success("Categoria aggiornata.")
+                st.caption(
+                    "La modifica vale subito per tutti gli slot di questa "
+                    "categoria, anche quelli già pubblicati."
+                )
                 st.rerun()
             else:
-                st.error("Codice non trovato.")
+                st.error("Categoria non trovata.")
+
+        st.markdown("**Elimina una categoria**")
+        cid_del = st.selectbox(
+            "Categoria da eliminare",
+            options=list(categories["category_id"]),
+            format_func=_label_cat,
+            key="cat_del_sel",
+        )
+        ok_del = st.checkbox("Confermo", key="cat_del_ok")
+        if st.button("Elimina categoria", key="cat_del_btn") and ok_del:
+            if data.delete_category(cid_del):
+                st.success(f"{cid_del} eliminata.")
+                st.rerun()
+            else:
+                st.error("Categoria non trovata.")

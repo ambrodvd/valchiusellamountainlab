@@ -60,7 +60,7 @@ def send_confirmation(
 
     body = f"""Ciao {name},
 
-ti confermo l'appuntamento per {title} del {date_str} alle {time_str}{durata}.
+ti confermiamo la prenotazione per {title} del {date_str} alle {time_str}{durata}.
 
 {dove}
 {extra}
@@ -68,12 +68,11 @@ ti confermo l'appuntamento per {title} del {date_str} alle {time_str}{durata}.
 
 Codice appuntamento: {ref}
 
-Se poi non riesci a venire scrivimi rispondendo qui, cosi' libero lo slot per qualcun altro.
-
 A presto,
-{lab}
+
+Davide
 """
-    _send(to, f"Appuntamento confermato - {title}, {date_str}", body)
+    _send(to, f"Prenotazione confermata", body)
 
 
 def send_cancellation(

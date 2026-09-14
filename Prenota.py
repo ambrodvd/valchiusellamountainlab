@@ -11,6 +11,77 @@ st.set_page_config(
     page_title="Prenota un appuntamento", layout="centered"
 )
 
+EMAIL_LAB = "valchiusellamountainlab@gmail.com"
+
+TERMINI = """
+**PRESTAZIONI**
+
+I servizi offerti hanno natura esclusivamente sportiva e non costituiscono in
+alcun modo prestazione sanitaria, medica o diagnostica. I test non sono
+finalizzati alla diagnosi, prevenzione o cura di alcuna patologia, non
+sostituiscono la visita medico-sportiva né il rilascio di certificazioni di
+idoneità, e non sono eseguiti da personale medico. I risultati hanno finalità
+esclusivamente allenante e di monitoraggio della prestazione.
+
+L'accesso ai test è riservato a soggetti maggiorenni in buono stato di salute.
+
+Il Cliente dichiara e garantisce, sotto la propria responsabilità:
+
+a) di essere in possesso di certificato medico di idoneità all'attività
+sportiva agonistica in corso di validità, che si impegna a esibire prima
+dell'inizio del test;
+
+b) di non essere a conoscenza di alcuna condizione, patologia, infortunio o
+terapia in corso che renda sconsigliabile o pericoloso lo svolgimento di uno
+sforzo fisico intenso e progressivo fino a esaurimento;
+
+c) di aver compilato in modo veritiero e completo il questionario anamnestico
+pre-test fornito dal Laboratorio.
+
+Il Laboratorio si riserva il diritto insindacabile di non erogare il test in
+assenza di certificato valido, in caso di dichiarazioni incomplete, o qualora
+ritenga che le condizioni del Cliente non ne consentano lo svolgimento in
+sicurezza.
+
+**PRENOTAZIONE E PAGAMENTO**
+
+La prenotazione si perfeziona esclusivamente con il pagamento integrale del
+corrispettivo tramite la piattaforma Stripe al momento della richiesta. Gli
+slot sono confermati in ordine di pagamento ricevuto e in numero limitato.
+
+Il contratto si intende concluso con l'invio da parte del Laboratorio della
+email di conferma contenente data, ora e tipologia di test.
+
+Il Cliente riceve fattura elettronica sulla base dei dati di fatturazione da
+lui inseriti nella piattaforma Stripe al momento del pagamento. È onere del
+Cliente fornire dati corretti e completi.
+
+**CANCELLAZIONI E RIMBORSI**
+
+Le cancellazioni devono essere comunicate via email a
+valchiusellamountainlab@gmail.com. Fa fede l'orario di ricezione della email da
+parte del Laboratorio.
+
+Cancellazione con più di 144 ore (6 giorni) di preavviso rispetto all'orario
+dell'appuntamento: nessuna penale. Il Laboratorio invia all'indirizzo email
+utilizzato per la prenotazione un buono sconto pari al 100% del corrispettivo
+versato, utilizzabile per una prenotazione successiva.
+
+Cancellazione con preavviso compreso tra 72 ore (3 giorni) e 144 ore
+(6 giorni): il Laboratorio invia all'indirizzo email utilizzato per la
+prenotazione un buono sconto pari al 50% del corrispettivo versato,
+utilizzabile per una prenotazione successiva. Il restante 50% è trattenuto a
+titolo di penale.
+
+Cancellazione con meno di 72 ore (3 giorni) di preavviso: nessun rimborso e
+nessun buono sconto.
+
+Le somme non rimborsate sono trattenute a titolo di penale ai sensi dell'art.
+1382 c.c., a ristoro forfettario del mancato utilizzo dello slot e delle
+risorse riservate. Le parti riconoscono tali importi congrui e proporzionati
+rispetto all'interesse del Laboratorio.
+"""
+
 # --- logo ---
 
 try:
@@ -27,23 +98,38 @@ if LOGO.exists():
 
 st.title("Prenota un appuntamento")
 
+
+def blocco_termini() -> None:
+    """Avviso sulle cancellazioni piu' termini e condizioni, in fondo alla pagina."""
+    st.divider()
+    st.warning(
+        "Per cancellare o spostare una prenotazione è necessario inviare "
+        f"una mail a {EMAIL_LAB}"
+    )
+    with st.expander("Termini e condizioni"):
+        st.markdown(TERMINI)
+
+
 try:
     categories = data.load_categories()
     slots = data.load_slots()
     bookings = data.load_bookings()
 except Exception:
     st.error("Impossibile caricare il calendario. Riprova tra un momento.")
+    blocco_termini()
     st.stop()
 
 vista_base = data.slots_with_category(slots, categories)
 
 if vista_base.empty:
     st.info("Nessun appuntamento disponibile al momento.")
+    blocco_termini()
     st.stop()
 
 upcoming = vista_base[vista_base["date"] >= date.today()]
 if upcoming.empty:
     st.info("Nessun appuntamento disponibile al momento.")
+    blocco_termini()
     st.stop()
 
 taken = data.seats_taken(bookings)
@@ -57,6 +143,7 @@ upcoming = upcoming[upcoming["free"] > 0]
 
 if upcoming.empty:
     st.info("Al momento non ci sono slot liberi. Riprova tra qualche giorno.")
+    blocco_termini()
     st.stop()
 
 # --- filtri ---
@@ -121,6 +208,7 @@ disponibili = list(vista.itertuples(index=False))
 
 if not disponibili:
     st.warning("Nessuno slot libero con questi filtri.")
+    blocco_termini()
     st.stop()
 
 st.caption(f"{len(disponibili)} appuntamenti disponibili")
@@ -151,6 +239,14 @@ if choice.note:
 if dettagli:
     st.caption("  ·  ".join(dettagli))
 
+# Si paga solo tramite Stripe: uno slot a pagamento senza link non e' prenotabile.
+pagamento_mancante = bool(choice.price_eur) and not str(choice.payment_link).strip()
+if pagamento_mancante:
+    st.error(
+        "Questo appuntamento non è prenotabile online in questo momento: "
+        f"manca il link di pagamento. Scrivimi a {EMAIL_LAB} e lo sistemo."
+    )
+
 # --- form ---
 
 with st.form("booking_form"):
@@ -160,7 +256,14 @@ with st.form("booking_form"):
     consent = st.checkbox(
         "Acconsento al trattamento dei miei dati per la gestione dell'appuntamento."
     )
-    submitted = st.form_submit_button("Conferma appuntamento", type="primary")
+    accetta = st.checkbox(
+        "Ho letto e accetto i termini e condizioni, e approvo specificamente le "
+        "clausole su cancellazioni, rimborsi e penale (art. 1382 c.c.)."
+    )
+    st.caption("Trovi il testo completo in fondo alla pagina.")
+    submitted = st.form_submit_button(
+        "Conferma appuntamento", type="primary", disabled=pagamento_mancante
+    )
 
 if submitted:
     cifre = re.sub(r"\D", "", phone)
@@ -172,6 +275,8 @@ if submitted:
         st.error("Inserisci un numero di telefono valido.")
     elif not consent:
         st.error("Devi accettare l'informativa per procedere.")
+    elif not accetta:
+        st.error("Devi accettare i termini e condizioni per procedere.")
     else:
         with st.spinner("Confermo..."):
             if data.already_booked(choice.slot_id, email):
@@ -195,36 +300,46 @@ if submitted:
                         type="primary",
                     )
                     st.caption(
-                        "Trovi lo stesso link nella mail di conferma: "
-                        "puoi pagare anche più tardi."
+                        "Trovi lo stesso link nella mail di conferma. "
+                        "La prenotazione si perfeziona con il pagamento."
                     )
-                elif choice.price_eur:
-                    st.info(f"Costo: € {choice.price_eur:.2f}, da saldare sul posto.")
 
                 st.balloons()
 
-                try:
-                    mailer.send_confirmation(
-                        to=email,
-                        name=name.strip(),
-                        title=choice.name,
-                        date_str=choice.date.strftime("%d/%m/%Y"),
-                        time_str=choice.time,
-                        ref=ref,
-                        coach=choice.coach,
-                        location=choice.location,
-                        duration_min=int(choice.duration_min or 0),
-                        price_eur=float(choice.price_eur or 0),
-                        payment_link=choice.payment_link,
-                        description=choice.description,
+                errori = mailer.send_booking_emails(
+                    to=email,
+                    name=name.strip(),
+                    title=choice.name,
+                    date_str=choice.date.strftime("%d/%m/%Y"),
+                    time_str=choice.time,
+                    ref=ref,
+                    coach=choice.coach,
+                    location=choice.location,
+                    duration_min=int(choice.duration_min or 0),
+                    price_eur=float(choice.price_eur or 0),
+                    payment_link=choice.payment_link,
+                    description=choice.description,
+                    phone=phone.strip(),
+                )
+
+                # La notifica interna non riguarda il cliente: se fallisce la
+                # registro nei log di Streamlit Cloud senza dirglielo.
+                if "lab" in errori:
+                    print(
+                        f"[NOTIFICA LAB FALLITA] ref={ref} "
+                        f"slot={choice.slot_id} email={email} — {errori['lab']}"
                     )
-                    st.caption(
-                        "Ti ho mandato una mail di conferma. Se non la trovi, "
-                        "controlla nello spam e segnala il messaggio come attendibile."
-                    )
-                except Exception as exc:
+
+                if "cliente" in errori:
                     st.warning(
                         "Appuntamento registrato, ma l'email di conferma non è partita. "
                         f"Conserva il codice {ref}."
                     )
-                    st.caption(f"Debug: {type(exc).__name__} — {exc}")
+                    st.caption(f"Debug: {errori['cliente']}")
+                else:
+                    st.caption(
+                        "Ti ho mandato una mail di conferma. Se non la trovi, "
+                        "controlla nello spam e segnala il messaggio come attendibile."
+                    )
+
+blocco_termini()

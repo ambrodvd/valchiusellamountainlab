@@ -398,6 +398,11 @@ with tab_tipi:
             st.error("Il nome è obbligatorio.")
         elif not t_coach.strip():
             st.error("L'allenatore è obbligatorio.")
+        elif t_price > 0 and not link:
+            st.error(
+                "Il link di pagamento è obbligatorio per le categorie a pagamento: "
+                "si paga solo tramite Stripe."
+            )
         elif link and not link.startswith("http"):
             st.error("Il link di pagamento deve iniziare con http.")
         else:
@@ -468,6 +473,13 @@ with tab_tipi:
         if salva:
             if not e_coach.strip():
                 st.error("L'allenatore è obbligatorio.")
+            elif e_price > 0 and not e_link.strip():
+                st.error(
+                    "Il link di pagamento è obbligatorio per le categorie a pagamento: "
+                    "si paga solo tramite Stripe."
+                )
+            elif e_link.strip() and not e_link.strip().startswith("http"):
+                st.error("Il link di pagamento deve iniziare con http.")
             elif data.update_category(
                 category_id=cid_sel,
                 name=e_name,

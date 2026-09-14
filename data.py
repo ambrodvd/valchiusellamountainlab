@@ -13,7 +13,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-DEFAULT_LOCATION = "Valchiusella Mountain Lab -  Via delle miniere 3 - Traversella"
+DEFAULT_LOCATION = "Valchiusella Mountain Hub, Via delle Miniere 2, 10080 Traversella (TO)"
 
 CATEGORY_COLUMNS = [
     "category_id", "name", "coach", "location", "duration_min",

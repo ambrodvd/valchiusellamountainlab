@@ -1,4 +1,6 @@
+import re
 from datetime import date, timedelta
+from pathlib import Path
 
 import streamlit as st
 
@@ -8,6 +10,21 @@ import mailer
 st.set_page_config(
     page_title="Prenota un appuntamento", page_icon="🏔️", layout="centered"
 )
+
+# --- logo ---
+
+try:
+    _tema = st.context.theme.type          # "light" oppure "dark"
+except Exception:
+    _tema = "light"
+
+LOGO = Path(__file__).parent / (
+    "logo_vmh_bianco.png" if _tema == "dark" else "logo_vmh_blu.png"
+)
+if LOGO.exists():
+    _, center, _ = st.columns([1, 2, 1])
+    center.image(str(LOGO), use_container_width=True)
+
 st.title("🏔️ Prenota un appuntamento")
 
 try:
@@ -34,6 +51,13 @@ upcoming = upcoming.assign(
     booked=lambda d: d["slot_id"].map(taken).fillna(0).astype(int)
 )
 upcoming = upcoming.assign(free=lambda d: (d["capacity"] - d["booked"]).clip(lower=0))
+
+# solo slot con posti liberi: quelli pieni non vengono mostrati affatto
+upcoming = upcoming[upcoming["free"] > 0]
+
+if upcoming.empty:
+    st.info("Al momento non ci sono slot liberi. Riprova tra qualche giorno.")
+    st.stop()
 
 # --- filtri ---
 
@@ -92,29 +116,20 @@ def etichetta(row) -> str:
     )
 
 
-slots_list = list(vista.itertuples(index=False))
-disponibili = [r for r in slots_list if r.free > 0]
-occupati = [r for r in slots_list if r.free <= 0]
+disponibili = list(vista.itertuples(index=False))
+
+if not disponibili:
+    st.warning("Nessuno slot libero con questi filtri.")
+    st.stop()
 
 st.caption(f"{len(disponibili)} appuntamenti disponibili")
 
-choice = None
-if disponibili:
-    choice = st.radio(
-        "Scegli lo slot",
-        options=disponibili,
-        format_func=etichetta,
-        label_visibility="collapsed",
-    )
-
-if occupati:
-    with st.expander(f"Slot già occupati ({len(occupati)})"):
-        for r in occupati:
-            st.markdown(etichetta(r))
-
-if choice is None:
-    st.warning("Non ci sono slot liberi con questi filtri.")
-    st.stop()
+choice = st.radio(
+    "Scegli lo slot",
+    options=disponibili,
+    format_func=etichetta,
+    label_visibility="collapsed",
+)
 
 st.divider()
 
@@ -138,17 +153,20 @@ if dettagli:
 with st.form("booking_form"):
     name = st.text_input("Nome e cognome")
     email = st.text_input("Email")
-    phone = st.text_input("Telefono (facoltativo)")
+    phone = st.text_input("Telefono", placeholder="es. 333 1234567")
     consent = st.checkbox(
         "Acconsento al trattamento dei miei dati per la gestione dell'appuntamento."
     )
     submitted = st.form_submit_button("Conferma appuntamento", type="primary")
 
 if submitted:
+    cifre = re.sub(r"\D", "", phone)
     if not name.strip():
         st.error("Inserisci il tuo nome.")
     elif "@" not in email or "." not in email.split("@")[-1]:
         st.error("Inserisci un indirizzo email valido.")
+    elif len(cifre) < 8:
+        st.error("Inserisci un numero di telefono valido.")
     elif not consent:
         st.error("Devi accettare l'informativa per procedere.")
     else:

@@ -148,7 +148,7 @@ if upcoming.empty:
 
 # --- filtri ---
 
-c1, c2 = st.columns(2)
+c1, c2, c3 = st.columns(3)
 
 cat_options = ["tutti"] + sorted(upcoming["category_id"].unique().tolist())
 nomi_cat = dict(zip(upcoming["category_id"], upcoming["name"]))
@@ -161,26 +161,60 @@ filtro_cat = c1.selectbox(
 
 periodo = c2.selectbox(
     "Periodo",
-    options=["tutti", "questa_settimana", "prossima_settimana"],
+    options=[
+        "prossima_settimana", "questa_settimana",
+        "questo_mese", "prossimo_mese", "tutti",
+    ],
     format_func=lambda p: {
         "tutti": "Tutte le date",
         "questa_settimana": "📅 Questa settimana",
         "prossima_settimana": "📅 Prossima settimana",
+        "questo_mese": "🗓️ Questo mese",
+        "prossimo_mese": "🗓️ Prossimo mese",
     }[p],
 )
+
+coach_options = ["tutti"] + sorted(
+    {str(c).strip() for c in upcoming["coach"] if str(c).strip()}
+)
+filtro_coach = c3.selectbox(
+    "Allenatore",
+    options=coach_options,
+    format_func=lambda c: "Tutti" if c == "tutti" else c,
+    disabled=len(coach_options) < 3,
+)
+
+
+def primo_del_mese_dopo(giorno: date) -> date:
+    """Primo giorno del mese successivo a quello di `giorno`."""
+    if giorno.month == 12:
+        return date(giorno.year + 1, 1, 1)
+    return date(giorno.year, giorno.month + 1, 1)
+
 
 oggi = date.today()
 lunedi = oggi - timedelta(days=oggi.weekday())
 domenica = lunedi + timedelta(days=6)
+inizio_prossimo_mese = primo_del_mese_dopo(oggi)
+inizio_terzo_mese = primo_del_mese_dopo(inizio_prossimo_mese)
 
 vista = upcoming
 if filtro_cat != "tutti":
     vista = vista[vista["category_id"] == filtro_cat]
+if filtro_coach != "tutti":
+    vista = vista[vista["coach"].astype(str).str.strip() == filtro_coach]
 if periodo == "questa_settimana":
     vista = vista[vista["date"] <= domenica]
 elif periodo == "prossima_settimana":
     vista = vista[
         (vista["date"] > domenica) & (vista["date"] <= domenica + timedelta(days=7))
+    ]
+elif periodo == "questo_mese":
+    vista = vista[vista["date"] < inizio_prossimo_mese]
+elif periodo == "prossimo_mese":
+    vista = vista[
+        (vista["date"] >= inizio_prossimo_mese)
+        & (vista["date"] < inizio_terzo_mese)
     ]
 
 vista = vista.sort_values(["date", "time"])

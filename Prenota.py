@@ -138,6 +138,10 @@ upcoming = upcoming.assign(
 )
 upcoming = upcoming.assign(free=lambda d: (d["capacity"] - d["booked"]).clip(lower=0))
 
+# slot di altri allenatori sovrapposti a uno già prenotato: il lab è occupato
+bloccati = data.blocked_slots(upcoming, bookings)
+upcoming = upcoming[~upcoming["slot_id"].isin(bloccati)]
+
 # solo slot con posti liberi: quelli pieni non vengono mostrati affatto
 upcoming = upcoming[upcoming["free"] > 0]
 
@@ -318,6 +322,11 @@ if submitted:
             elif data.count_live(choice.slot_id) >= choice.capacity:
                 st.error("Qualcuno ha appena preso questo slot. Scegline un altro.")
                 data.load_bookings.clear()
+            elif data.conflict_live(choice.slot_id):
+                st.error(
+                    "Il laboratorio è appena stato prenotato in questo orario. "
+                    "Scegli un altro slot."
+                )
             else:
                 ref = data.add_booking(choice.slot_id, name, email, phone)
 

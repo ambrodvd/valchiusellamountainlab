@@ -29,8 +29,8 @@ categories = data.load_categories()
 slots = data.load_slots()
 bookings = data.load_bookings()
 
-tab_cal, tab_pren, tab_tipi = st.tabs(
-    ["Calendario", "Prenotazioni", "Categorie test"]
+tab_pren, tab_cal, tab_tipi = st.tabs(
+    ["Prenotazioni", "Calendario", "Categorie test"]
 )
 
 # =============================================================
@@ -38,6 +38,13 @@ tab_cal, tab_pren, tab_tipi = st.tabs(
 # =============================================================
 with tab_cal:
     st.subheader("Apri nuovi slot")
+
+    msg_slot = st.session_state.pop("msg_slot", None)
+    if msg_slot:
+        st.success(msg_slot)
+    warn_slot = st.session_state.pop("warn_slot", None)
+    if warn_slot:
+        st.warning(warn_slot)
 
     if categories.empty:
         st.warning("Crea prima almeno una categoria di test.")
@@ -93,15 +100,33 @@ with tab_cal:
             elif not orari:
                 st.error("Inserisci almeno un orario.")
             else:
-                righe = []
-                for w in range(int(s_weeks) + 1):
-                    giorno = s_date + timedelta(weeks=w)
-                    for t in orari:
-                        righe.append(
-                            (giorno.isoformat(), t, s_cat, int(s_cap), s_note)
+                candidati = [
+                    (s_date + timedelta(weeks=w), t)
+                    for w in range(int(s_weeks) + 1)
+                    for t in orari
+                ]
+                ok, bloccati = data.check_new_slots(
+                    candidati, s_cat, slots, categories, bookings
+                )
+
+                if ok:
+                    righe = [
+                        (d.isoformat(), t, s_cat, int(s_cap), s_note)
+                        for d, t in ok
+                    ]
+                    ids = data.add_slots_bulk(righe)
+                    st.session_state["msg_slot"] = (
+                        f"{len(ids)} slot creati ({ids[0]} → {ids[-1]})."
+                    )
+                if bloccati:
+                    st.session_state["warn_slot"] = (
+                        f"{len(bloccati)} slot non creati: si sovrappongono "
+                        "a slot già prenotati.\n\n"
+                        + "\n".join(
+                            f"- {d.strftime('%d/%m/%Y')} ore {t}: {motivo}"
+                            for d, t, motivo in bloccati
                         )
-                ids = data.add_slots_bulk(righe)
-                st.success(f"{len(ids)} slot creati ({ids[0]} → {ids[-1]}).")
+                    )
                 st.rerun()
 
     st.divider()
@@ -118,6 +143,12 @@ with tab_cal:
         vista_slot = vista_slot.assign(
             liberi=lambda d: (d["capacity"] - d["prenotati"]).clip(lower=0)
         )
+        bloccati_cal = data.blocked_slots(vista_slot, bookings)
+        vista_slot["stato"] = [
+            "prenotato" if p > 0 else ("bloccato" if s in bloccati_cal else "libero")
+            for s, p in zip(vista_slot["slot_id"], vista_slot["prenotati"])
+        ]
+        vista_slot.loc[vista_slot["slot_id"].isin(bloccati_cal), "liberi"] = 0
 
         solo_futuri = st.checkbox("Solo slot futuri", value=True, key="slot_fut")
         if solo_futuri:
@@ -126,8 +157,8 @@ with tab_cal:
 
         st.dataframe(
             vista_slot[[
-                "slot_id", "date", "time", "name", "coach", "capacity",
-                "prenotati", "liberi", "note",
+                "slot_id", "date", "time", "name", "coach", "stato",
+                "capacity", "prenotati", "liberi", "note",
             ]],
             use_container_width=True,
             hide_index=True,
@@ -168,135 +199,265 @@ with tab_pren:
         merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
         merged = merged.sort_values(["date", "time", "timestamp"], na_position="last")
         merged = merged.rename(columns={"name_x": "cliente", "name_y": "test"})
-        active = merged[merged["status"] != "cancelled"]
+        merged["price_eur"] = merged["price_eur"].fillna(0.0)
+
+        # incassato: se non indicato (prenotazioni vecchie) vale il listino
+        merged["incassato"] = merged["amount_paid"].where(
+            merged["amount_paid"].notna(), merged["price_eur"]
+        )
+        merged.loc[merged["paid"] != "si", "incassato"] = 0.0
+        merged["rimborsato"] = merged["amount_refunded"].fillna(0.0)
+
+        active = merged[~merged["status"].isin(data.INACTIVE_STATUSES)]
+        da_incassare = active[active["paid"] != "si"]
+        incassate = active[active["paid"] == "si"]
+        rimborsate = merged[merged["status"] == "refunded"]
         oggi = pd.Timestamp(date.today())
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Confermate", len(active))
-        c2.metric("Annullate", len(merged) - len(active))
-        c3.metric(
+        c2.metric("Annullate", int((merged["status"] == "cancelled").sum()))
+        c3.metric("Rimborsate", len(rimborsate))
+        c4.metric(
             "Future",
             int((active["date"] >= oggi).sum()) if not active.empty else 0,
         )
-        da_incassare = (
-            active[active["paid"] != "si"]["price_eur"].sum()
-            if not active.empty else 0.0
-        )
-        c4.metric("Da incassare", f"€ {da_incassare:,.2f}")
 
-        # ---------- pagamenti ----------
-        st.divider()
-        st.subheader("Pagamenti")
+        def _giorni(serie) -> list[str]:
+            return [d.strftime("%d/%m/%Y") if pd.notna(d) else "" for d in serie]
 
-        def _tabella_pagamenti(df: pd.DataFrame, chiave: str) -> pd.DataFrame:
-            return pd.DataFrame({
-                "seleziona": [False] * len(df),
+        def _base(df: pd.DataFrame) -> dict:
+            return {
                 "codice": df["booking_id"].values,
-                "giorno": [
-                    d.strftime("%d/%m/%Y") if pd.notna(d) else ""
-                    for d in df["date"]
-                ],
+                "giorno": _giorni(df["date"]),
                 "ora": df["time"].fillna("").values,
                 "cliente": df["cliente"].fillna("").values,
                 "test": df["test"].fillna("").values,
                 "coach": df["coach"].fillna("").values,
-                "importo": df["price_eur"].fillna(0.0).values,
+            }
+
+        _euro = {"format": "€ %.2f"}
+
+        # =========================================================
+        # PAGAMENTI
+        # =========================================================
+        # Termini e condizioni: cancellazione oltre 144 h → buono 100%,
+        # tra 72 e 144 h → buono 50%, sotto 72 h → nessun rimborso.
+        PERC_PARZIALE = 0.5
+
+        st.divider()
+        st.subheader("Pagamenti")
+
+        msg = st.session_state.pop("msg_pagamenti", None)
+        if msg:
+            st.success(msg)
+
+        tot_da_incassare = float(da_incassare["price_eur"].sum())
+        tot_incassato = float(merged.loc[merged["paid"] == "si", "incassato"].sum())
+        tot_rimborsato = float(rimborsate["rimborsato"].sum())
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Da incassare", f"€ {tot_da_incassare:,.2f}")
+        m2.metric("Incassato", f"€ {tot_incassato:,.2f}")
+        m3.metric("Rimborsato", f"€ {tot_rimborsato:,.2f}")
+        m4.metric("Netto", f"€ {tot_incassato - tot_rimborsato:,.2f}")
+
+        def _tabella_selezionabile(df: pd.DataFrame, key: str, importi: dict) -> list:
+            """Tabella con checkbox di selezione; ritorna i codici selezionati."""
+            tab = pd.DataFrame({
+                "seleziona": [False] * len(df),
+                **_base(df),
+                **{nome: valori for nome, valori in importi.items()},
             })
+            mod = st.data_editor(
+                tab,
+                use_container_width=True,
+                hide_index=True,
+                key=key,
+                column_config={
+                    "seleziona": st.column_config.CheckboxColumn("✓"),
+                    **{
+                        nome: st.column_config.NumberColumn(nome.capitalize(), **_euro)
+                        for nome in importi
+                    },
+                },
+                disabled=[c for c in tab.columns if c != "seleziona"],
+            )
+            return [str(c).upper() for c in mod.loc[mod["seleziona"], "codice"]]
 
-        _config = {
-            "seleziona": st.column_config.CheckboxColumn("✓"),
-            "importo": st.column_config.NumberColumn("Importo", format="€ %.2f"),
-        }
-        _bloccate = [
-            "codice", "giorno", "ora", "cliente", "test", "coach", "importo",
-        ]
+        # ---------- da incassare ----------
+        st.markdown(f"**Da incassare ({len(da_incassare)})**")
 
-        if active.empty:
-            st.info("Nessuna prenotazione attiva.")
+        if da_incassare.empty:
+            st.success("Tutto incassato.")
         else:
-            da_pagare = active[active["paid"] != "si"]
-            pagati = active[active["paid"] == "si"]
+            scelti_da = _tabella_selezionabile(
+                da_incassare, "ed_da_incassare",
+                {"listino": da_incassare["price_eur"].values},
+            )
+            listino_di = {
+                str(b).upper(): float(p)
+                for b, p in zip(da_incassare["booking_id"], da_incassare["price_eur"])
+            }
 
-            # ----- non pagati -----
-            st.markdown(f"**Da incassare ({len(da_pagare)})**")
-
-            if da_pagare.empty:
-                st.success("Tutto incassato.")
-            else:
-                tab_np = _tabella_pagamenti(da_pagare, "np")
-                mod_np = st.data_editor(
-                    tab_np,
-                    use_container_width=True,
-                    hide_index=True,
-                    key="ed_non_pagati",
-                    column_config=_config,
-                    disabled=_bloccate,
-                )
-                scelti_np = [
-                    str(mod_np.loc[i, "codice"]).upper()
-                    for i in mod_np.index
-                    if bool(mod_np.loc[i, "seleziona"])
-                ]
-                b1, b2 = st.columns([1, 3])
-                if b1.button(
-                    "Segna come pagati", type="primary",
-                    key="btn_segna_pagati", disabled=not scelti_np,
-                ):
-                    n = data.set_paid_bulk({c: True for c in scelti_np})
-                    st.success(f"{n} prenotazioni segnate come pagate.")
-                    st.rerun()
-                if scelti_np:
-                    totale = float(
-                        da_pagare[da_pagare["booking_id"].isin(scelti_np)][
-                            "price_eur"
-                        ].sum()
+            diverso = st.checkbox(
+                "L'importo incassato è diverso",
+                key="chk_importo_diverso",
+            )
+            importo_diverso = None
+            if diverso:
+                if len(scelti_da) == 1:
+                    importo_diverso = st.number_input(
+                        f"Importo incassato per {scelti_da[0]} (€)",
+                        min_value=0.0,
+                        value=listino_di[scelti_da[0]],
+                        step=1.0,
+                        key=f"imp_diverso_{scelti_da[0]}",
                     )
-                    b2.caption(
-                        f"{len(scelti_np)} selezionate · € {totale:,.2f}"
+                else:
+                    st.caption(
+                        "Seleziona una sola prenotazione per indicare un importo diverso."
                     )
 
-            # ----- pagati -----
-            st.markdown(f"**Già pagati ({len(pagati)})**")
+            pronto = bool(scelti_da) and (not diverso or importo_diverso is not None)
 
-            if pagati.empty:
-                st.caption("Nessun pagamento registrato.")
-            else:
-                tab_p = _tabella_pagamenti(pagati, "p")
-                mod_p = st.data_editor(
-                    tab_p,
-                    use_container_width=True,
-                    hide_index=True,
-                    key="ed_pagati",
-                    column_config=_config,
-                    disabled=_bloccate,
+            b1, b2 = st.columns([1, 3])
+            if b1.button(
+                "Segna come incassate", type="primary",
+                key="btn_incassa", disabled=not pronto,
+            ):
+                if diverso:
+                    importi = {scelti_da[0]: importo_diverso}
+                else:
+                    importi = {c: listino_di[c] for c in scelti_da}
+                n = data.mark_paid_bulk(importi)
+                st.session_state["msg_pagamenti"] = (
+                    f"{n} prenotazioni segnate come incassate "
+                    f"(€ {sum(importi.values()):,.2f})."
                 )
-                scelti_p = [
-                    str(mod_p.loc[i, "codice"]).upper()
-                    for i in mod_p.index
-                    if bool(mod_p.loc[i, "seleziona"])
-                ]
-                b3, b4 = st.columns([1, 3])
-                if b3.button(
-                    "Togli dai pagati", key="btn_togli_pagati",
-                    disabled=not scelti_p,
-                ):
-                    n = data.set_paid_bulk({c: False for c in scelti_p})
-                    st.success(f"{n} prenotazioni riportate fra i non pagati.")
-                    st.rerun()
-                if scelti_p:
-                    b4.caption(f"{len(scelti_p)} selezionate.")
+                st.rerun()
+            if scelti_da:
+                totale = (
+                    importo_diverso if importo_diverso is not None
+                    else sum(listino_di[c] for c in scelti_da)
+                )
+                b2.caption(f"{len(scelti_da)} selezionate · € {totale:,.2f}")
 
-        # ---------- elenco completo ----------
+        # ---------- incassate ----------
+        st.markdown(f"**Incassate ({len(incassate)})**")
+
+        if incassate.empty:
+            st.caption("Nessun incasso registrato.")
+        else:
+            scelti_inc = _tabella_selezionabile(
+                incassate, "ed_incassate",
+                {
+                    "listino": incassate["price_eur"].values,
+                    "incassato": incassate["incassato"].values,
+                },
+            )
+            incassato_di = {
+                str(b).upper(): float(v)
+                for b, v in zip(incassate["booking_id"], incassate["incassato"])
+            }
+
+            if scelti_inc:
+                tot = sum(incassato_di[c] for c in scelti_inc)
+                st.caption(
+                    f"{len(scelti_inc)} selezionate · incassato € {tot:,.2f} · "
+                    f"integrale (100%) € {tot:,.2f} · "
+                    f"parziale ({PERC_PARZIALE:.0%}) € {tot * PERC_PARZIALE:,.2f}"
+                )
+
+            ok_rimb = st.checkbox(
+                "Confermo il rimborso delle prenotazioni selezionate",
+                key="chk_rimborso",
+            )
+
+            b1, b2, b3 = st.columns(3)
+            if b1.button(
+                "Togli dagli incassati", key="btn_togli_incassati",
+                disabled=not scelti_inc,
+            ):
+                n = data.unmark_paid_bulk(scelti_inc)
+                st.session_state["msg_pagamenti"] = (
+                    f"{n} prenotazioni riportate fra quelle da incassare."
+                )
+                st.rerun()
+            if b2.button(
+                "Rimborso integrale", key="btn_rimb_integrale",
+                disabled=not (scelti_inc and ok_rimb),
+            ):
+                rimborsi = {c: incassato_di[c] for c in scelti_inc}
+                n = data.refund_bulk(rimborsi)
+                st.session_state["msg_pagamenti"] = (
+                    f"{n} rimborsi integrali registrati "
+                    f"(€ {sum(rimborsi.values()):,.2f}). "
+                    "Gli slot sono di nuovo prenotabili."
+                )
+                st.rerun()
+            if b3.button(
+                "Rimborso parziale", key="btn_rimb_parziale",
+                disabled=not (scelti_inc and ok_rimb),
+            ):
+                rimborsi = {
+                    c: round(incassato_di[c] * PERC_PARZIALE, 2) for c in scelti_inc
+                }
+                n = data.refund_bulk(rimborsi)
+                st.session_state["msg_pagamenti"] = (
+                    f"{n} rimborsi parziali ({PERC_PARZIALE:.0%}) registrati "
+                    f"(€ {sum(rimborsi.values()):,.2f}). "
+                    "Gli slot sono di nuovo prenotabili."
+                )
+                st.rerun()
+
+        # ---------- rimborsate ----------
+        st.markdown(f"**Rimborsate ({len(rimborsate)})**")
+
+        if rimborsate.empty:
+            st.caption("Nessun rimborso.")
+        else:
+            tipo = [
+                "Integrale" if rb >= inc - 0.005 else "Parziale"
+                for rb, inc in zip(rimborsate["rimborsato"], rimborsate["incassato"])
+            ]
+            st.dataframe(
+                pd.DataFrame({
+                    **_base(rimborsate),
+                    "email": rimborsate["email"].fillna("").values,
+                    "tipo": tipo,
+                    "incassato": rimborsate["incassato"].values,
+                    "rimborsato": rimborsate["rimborsato"].values,
+                    "trattenuto": (
+                        rimborsate["incassato"] - rimborsate["rimborsato"]
+                    ).values,
+                }),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "incassato": st.column_config.NumberColumn("Incassato", **_euro),
+                    "rimborsato": st.column_config.NumberColumn("Rimborsato", **_euro),
+                    "trattenuto": st.column_config.NumberColumn("Trattenuto", **_euro),
+                },
+            )
+
+        # =========================================================
+        # ELENCO COMPLETO
+        # =========================================================
         st.divider()
         st.subheader("Tutte le prenotazioni")
 
         colonne = [
             c for c in [
                 "booking_id", "date", "time", "test", "coach", "cliente",
-                "email", "phone", "paid", "status", "timestamp",
+                "email", "phone", "status", "paid", "price_eur",
+                "incassato", "rimborsato", "timestamp",
             ] if c in merged.columns
         ]
-        tabella = merged[colonne]
+        tabella = merged[colonne].copy()
+        tabella["status"] = tabella["status"].map(
+            lambda s: data.STATUS_LABELS.get(s, s)
+        )
         st.dataframe(tabella, use_container_width=True, hide_index=True)
         st.download_button(
             "Scarica prenotazioni CSV",
@@ -306,7 +467,9 @@ with tab_pren:
             key="dl_pren",
         )
 
-        # ---------- annullamento ----------
+        # =========================================================
+        # ANNULLAMENTO
+        # =========================================================
         st.divider()
         st.subheader("Annulla una prenotazione")
 
@@ -398,11 +561,6 @@ with tab_tipi:
             st.error("Il nome è obbligatorio.")
         elif not t_coach.strip():
             st.error("L'allenatore è obbligatorio.")
-        elif t_price > 0 and not link:
-            st.error(
-                "Il link di pagamento è obbligatorio per le categorie a pagamento: "
-                "si paga solo tramite Stripe."
-            )
         elif link and not link.startswith("http"):
             st.error("Il link di pagamento deve iniziare con http.")
         else:
@@ -442,44 +600,38 @@ with tab_tipi:
         )
         row = categories[categories["category_id"] == cid_sel].iloc[0]
 
-        with st.form("modifica_tipo"):
-            e_name = st.text_input("Nome", value=row["name"], key="cat_e_name")
+        k = cid_sel  # chiavi diverse per ogni categoria: i campi si ricaricano
+        with st.form(f"modifica_tipo_{k}"):
+            e_name = st.text_input("Nome", value=row["name"], key=f"cat_e_name_{k}")
             e_coach = st.text_input(
-                "Allenatore", value=row["coach"], key="cat_e_coach"
+                "Allenatore", value=row["coach"], key=f"cat_e_coach_{k}"
             )
             e_location = st.text_input(
                 "Luogo",
                 value=row["location"] or data.DEFAULT_LOCATION,
-                key="cat_e_location",
+                key=f"cat_e_location_{k}",
             )
             d1, d2 = st.columns(2)
             e_duration = d1.number_input(
                 "Durata (minuti)", min_value=5, max_value=480,
-                value=int(row["duration_min"]) or 60, step=5, key="cat_e_dur",
+                value=int(row["duration_min"]) or 60, step=5, key=f"cat_e_dur_{k}",
             )
             e_price = d2.number_input(
                 "Prezzo €", min_value=0.0, value=float(row["price_eur"]),
-                step=5.0, key="cat_e_price",
+                step=5.0, key=f"cat_e_price_{k}",
             )
             e_link = st.text_input(
                 "Link di pagamento dell'allenatore",
-                value=row["payment_link"], key="cat_e_link",
+                value=row["payment_link"], key=f"cat_e_link_{k}",
             )
             e_desc = st.text_area(
-                "Descrizione", value=row["description"], key="cat_e_desc"
+                "Descrizione", value=row["description"], key=f"cat_e_desc_{k}"
             )
             salva = st.form_submit_button("Salva modifiche")
 
         if salva:
             if not e_coach.strip():
                 st.error("L'allenatore è obbligatorio.")
-            elif e_price > 0 and not e_link.strip():
-                st.error(
-                    "Il link di pagamento è obbligatorio per le categorie a pagamento: "
-                    "si paga solo tramite Stripe."
-                )
-            elif e_link.strip() and not e_link.strip().startswith("http"):
-                st.error("Il link di pagamento deve iniziare con http.")
             elif data.update_category(
                 category_id=cid_sel,
                 name=e_name,

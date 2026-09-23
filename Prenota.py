@@ -305,8 +305,10 @@ with st.form("booking_form"):
 
 if submitted:
     cifre = re.sub(r"\D", "", phone)
-    if not name.strip():
-        st.error("Inserisci il tuo nome.")
+    # nome e cognome: almeno due parole di due lettere, senza cifre
+    parole = [p for p in re.split(r"\s+", name.strip()) if len(p) >= 2]
+    if len(parole) < 2 or any(ch.isdigit() for ch in name):
+        st.error("Inserisci nome e cognome")
     elif "@" not in email or "." not in email.split("@")[-1]:
         st.error("Inserisci un indirizzo email valido.")
     elif len(cifre) < 8:

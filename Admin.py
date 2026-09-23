@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -191,6 +192,153 @@ with tab_cal:
 # PRENOTAZIONI
 # =============================================================
 with tab_pren:
+    # =========================================================
+    # INSERIMENTO MANUALE (telefono, di persona, ecc.)
+    # =========================================================
+    msg_manuale = st.session_state.pop("msg_manuale", None)
+    if msg_manuale:
+        st.success(msg_manuale)
+    warn_manuale = st.session_state.pop("warn_manuale", None)
+    if warn_manuale:
+        st.warning(warn_manuale)
+
+    with st.expander("➕ Inserisci una prenotazione a mano"):
+        if categories.empty:
+            st.warning("Crea prima almeno una categoria di test.")
+        else:
+            def _label_cat_man(cid: str) -> str:
+                r = categories[categories["category_id"] == cid].iloc[0]
+                coach = f" · {r['coach']}" if str(r["coach"]).strip() else ""
+                return (
+                    f"{r['name']}{coach} · {int(r['duration_min'])} min "
+                    f"· € {r['price_eur']:.0f}"
+                )
+
+            # fuori dal form: cambiando categoria si aggiornano i valori sotto
+            m_cat = st.selectbox(
+                "Tipo di test",
+                options=list(categories["category_id"]),
+                format_func=_label_cat_man,
+                key="man_cat",
+            )
+            cat_man = categories[categories["category_id"] == m_cat].iloc[0]
+
+            with st.form(f"prenotazione_manuale_{m_cat}"):
+                f1, f2, f3 = st.columns(3)
+                m_date = f1.date_input("Data", value=date.today(), key="man_date")
+                m_time = f2.text_input("Ora (HH:MM)", value="09:00", key="man_time")
+                m_price = f3.number_input(
+                    "Prezzo €", min_value=0.0,
+                    value=float(cat_man["price_eur"]), step=5.0, key="man_price",
+                )
+
+                g1, g2 = st.columns(2)
+                m_name = g1.text_input("Nome e cognome", key="man_name")
+                m_email = g2.text_input("Email", key="man_email")
+
+                h1, h2 = st.columns(2)
+                m_phone = h1.text_input("Telefono", key="man_phone")
+                m_note = h2.text_input(
+                    "Nota interna (facoltativa)", key="man_note",
+                    placeholder="es. prenotata al telefono",
+                )
+
+                m_mail = st.checkbox(
+                    "Invia email di conferma al cliente e notifica al lab",
+                    value=True, key="man_mail",
+                )
+                m_incassata = st.checkbox(
+                    "Già incassata (registra il prezzo qui sopra come incasso)",
+                    key="man_incassata",
+                )
+                st.caption(
+                    f"Allenatore: {cat_man['coach'] or '—'} · "
+                    f"durata {int(cat_man['duration_min'])} min · "
+                    f"{cat_man['location']}"
+                )
+                crea_man = st.form_submit_button(
+                    "Crea prenotazione", type="primary"
+                )
+
+            if crea_man:
+                cifre_man = re.sub(r"\D", "", m_phone)
+                try:
+                    ora_man = datetime.strptime(
+                        m_time.strip(), "%H:%M"
+                    ).strftime("%H:%M")
+                except ValueError:
+                    ora_man = None
+
+                if not m_name.strip():
+                    st.error("Inserisci nome e cognome.")
+                elif "@" not in m_email or "." not in m_email.split("@")[-1]:
+                    st.error("Inserisci un indirizzo email valido.")
+                elif len(cifre_man) < 8:
+                    st.error("Inserisci un numero di telefono valido.")
+                elif ora_man is None:
+                    st.error(f"Orario non valido: «{m_time}». Usa il formato HH:MM.")
+                else:
+                    ok_man, bloccati_man = data.check_new_slots(
+                        [(m_date, ora_man)], m_cat, slots, categories, bookings
+                    )
+                    if bloccati_man:
+                        st.error(
+                            "Prenotazione non creata: "
+                            + bloccati_man[0][2]
+                        )
+                    else:
+                        with st.spinner("Registro..."):
+                            sid = data.add_slots_bulk([(
+                                m_date.isoformat(), ora_man, m_cat, 1,
+                                m_note.strip() or "inserita a mano",
+                            )])[0]
+                            ref_man = data.add_booking(
+                                sid, m_name, m_email, m_phone
+                            )
+                            if m_incassata:
+                                data.mark_paid_bulk({ref_man: float(m_price)})
+
+                            errori_man = {}
+                            if m_mail:
+                                errori_man = mailer.send_booking_emails(
+                                    to=m_email,
+                                    name=m_name.strip(),
+                                    title=cat_man["name"],
+                                    date_str=m_date.strftime("%d/%m/%Y"),
+                                    time_str=ora_man,
+                                    ref=ref_man,
+                                    coach=cat_man["coach"],
+                                    location=cat_man["location"],
+                                    duration_min=int(cat_man["duration_min"] or 0),
+                                    price_eur=float(m_price),
+                                    # se è già incassata non serve il link di pagamento
+                                    payment_link=(
+                                        "" if m_incassata
+                                        else cat_man["payment_link"]
+                                    ),
+                                    description=cat_man["description"],
+                                    phone=m_phone.strip(),
+                                )
+
+                        st.session_state["msg_manuale"] = (
+                            f"Prenotazione {ref_man} creata su slot {sid} — "
+                            f"{cat_man['name']}, {m_date.strftime('%d/%m/%Y')} "
+                            f"alle {ora_man}."
+                            + (f" Incassata € {float(m_price):,.2f}."
+                               if m_incassata else "")
+                        )
+                        if errori_man:
+                            st.session_state["warn_manuale"] = (
+                                "Prenotazione registrata, ma alcune email non "
+                                "sono partite: "
+                                + "; ".join(
+                                    f"{k} — {v}" for k, v in errori_man.items()
+                                )
+                            )
+                        st.rerun()
+
+    st.divider()
+
     if bookings.empty:
         st.info("Nessuna prenotazione.")
     else:
@@ -301,7 +449,7 @@ with tab_pren:
             }
 
             diverso = st.checkbox(
-                "L'importo incassato è diverso",
+                "L'importo incassato è diverso da quello a schermo",
                 key="chk_importo_diverso",
             )
             importo_diverso = None

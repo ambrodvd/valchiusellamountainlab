@@ -11,18 +11,6 @@ import mailer
 st.set_page_config(
     page_title="Prenota un appuntamento", layout="centered"
 )
-st.markdown(
-    """
-    <style>
-    /* titolo sempre su una riga, dimensione proporzionale allo schermo */
-    h1 {
-        white-space: nowrap;
-        font-size: clamp(1.05rem, 4.4vw, 2.2rem) !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 EMAIL_LAB = "valchiusellamountainlab@gmail.com"
 
@@ -248,7 +236,9 @@ st.divider()
 attivi = set(allenatori)
 if allenatori:
     st.caption("Allenatori")
-    colonne_coach = st.columns(min(len(allenatori), 4))
+    colonne_coach = st.container(key="caselle_coach").columns(
+        min(len(allenatori), 4)
+    )
     for i, nome_coach in enumerate(allenatori):
         col = colonne_coach[i % len(colonne_coach)]
         if not col.checkbox(
@@ -269,6 +259,35 @@ st.markdown(
         outline: 3px solid rgba(0,0,0,.55);
         outline-offset: -3px;
     }
+
+    /* il calendario resta una griglia anche su telefono:
+       senza questo Streamlit impila le sette colonne in verticale */
+    div[class*="st-key-riga_cal_"] div[data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        gap: .2rem !important;
+    }
+    div[class*="st-key-riga_cal_"] div[data-testid="stColumn"] {
+        min-width: 0 !important;
+        flex: 1 1 0 !important;
+    }
+    div[class*="st-key-riga_cal_"] button {
+        padding: .25rem 0 !important;
+        min-height: 2.1rem;
+        font-size: .8rem !important;
+    }
+    div[class*="st-key-riga_cal_"] div[data-testid="stElementContainer"] {
+        margin-bottom: 0 !important;
+    }
+
+    /* navigazione mese e caselle allenatori: niente impilamento */
+    div[class*="st-key-nav_mese"] div[data-testid="stHorizontalBlock"],
+    div[class*="st-key-caselle_coach"] div[data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+    }
+    div[class*="st-key-nav_mese"] div[data-testid="stColumn"],
+    div[class*="st-key-caselle_coach"] div[data-testid="stColumn"] {
+        min-width: 0 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -286,7 +305,7 @@ if "mese_pub" not in st.session_state:
 if "giorno_pub" not in st.session_state:
     st.session_state["giorno_pub"] = None
 
-k1, k2, k3 = st.columns([1, 4, 1])
+k1, k2, k3 = st.container(key="nav_mese").columns([1, 4, 1])
 if k1.button("◀", key="mese_prev"):
     a, m = st.session_state["mese_pub"]
     st.session_state["mese_pub"] = (a - 1, 12) if m == 1 else (a, m - 1)
@@ -330,15 +349,15 @@ for g, insieme in coach_giorno.items():
 
 st.markdown("<style>" + "".join(regole) + "</style>", unsafe_allow_html=True)
 
-intestazioni = st.columns(7)
+intestazioni = st.container(key="riga_cal_intestazioni").columns(7)
 for col, g in zip(intestazioni, ("lun", "mar", "mer", "gio", "ven", "sab", "dom")):
     col.markdown(
         f"<div style='text-align:center;font-size:.7rem;opacity:.6'>{g}</div>",
         unsafe_allow_html=True,
     )
 
-for settimana in calendar.monthcalendar(anno_pub, mese_pub):
-    colonne = st.columns(7)
+for n_settimana, settimana in enumerate(calendar.monthcalendar(anno_pub, mese_pub)):
+    colonne = st.container(key=f"riga_cal_{n_settimana}").columns(7)
     for col, giorno in zip(colonne, settimana):
         if giorno == 0:
             col.write("")
@@ -395,7 +414,7 @@ def etichetta(row) -> str:
     posti = "" if row.capacity == 1 else f" · {row.free} posti"
     return (
         f":blue-background[**{row.time}**] "
-        f":gray-background[{giorno} {row.date.strftime('%d/%m/%Y')}] "
+        f":gray-background[{giorno} {row.date.strftime('%d/%m')}] "
         f"&nbsp; {coach}{row.name}{prezzo}{posti}"
     )
 
@@ -412,7 +431,9 @@ st.caption(f"{len(disponibili)} appuntamenti disponibili")
 # pulsanti larghi quanto la pagina, testo a sinistra, bordo del colore del coach
 regole_slot = [
     'div[class*="st-key-slot_"] button { justify-content:flex-start; '
-    "text-align:left; padding:.55rem .8rem; }"
+    "text-align:left; padding:.55rem .7rem; height:auto; }",
+    'div[class*="st-key-slot_"] button p { white-space:normal; '
+    "line-height:1.35; }",
 ]
 for r in disponibili:
     tinta = colore_hex.get(str(r.coach).strip(), MISTO)

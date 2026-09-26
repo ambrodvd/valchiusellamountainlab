@@ -1,3 +1,4 @@
+import calendar
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -8,20 +9,7 @@ import data
 import mailer
 
 st.set_page_config(
-    page_title="Valchiusella Mountail Lab", layout="centered"
-)
-
-st.markdown(
-    """
-    <style>
-    /* titolo sempre su una riga, dimensione proporzionale allo schermo */
-    h1 {
-        white-space: nowrap;
-        font-size: clamp(1.05rem, 4.4vw, 2.2rem) !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+    page_title="Prenota un appuntamento", layout="centered"
 )
 
 EMAIL_LAB = "valchiusellamountainlab@gmail.com"
@@ -175,7 +163,7 @@ if upcoming.empty:
 
 # --- filtri ---
 
-c1, c2, c3 = st.columns(3)
+c1, c2 = st.columns(2)
 
 cat_options = ["tutti"] + sorted(upcoming["category_id"].unique().tolist())
 nomi_cat = dict(zip(upcoming["category_id"], upcoming["name"]))
@@ -201,15 +189,19 @@ periodo = c2.selectbox(
     }[p],
 )
 
-coach_options = ["tutti"] + sorted(
-    {str(c).strip() for c in upcoming["coach"] if str(c).strip()}
-)
-filtro_coach = c3.selectbox(
-    "Allenatore",
-    options=coach_options,
-    format_func=lambda c: "Tutti" if c == "tutti" else c,
-    disabled=len(coach_options) < 3,
-)
+# --- allenatori: una casella per ciascuno, tutte attive di partenza ---
+
+COLORI_MD = ["blue", "green", "orange", "violet"]
+COLORI_HEX = {
+    "blue": "#1e88e5", "green": "#43a047",
+    "orange": "#fb8c00", "violet": "#8e24aa",
+}
+MISTO = "#546e7a"   # giorni con più allenatori
+
+allenatori = sorted({str(c).strip() for c in upcoming["coach"] if str(c).strip()})
+colore_md = {c: COLORI_MD[i % len(COLORI_MD)] for i, c in enumerate(allenatori)}
+colore_hex = {c: COLORI_HEX[colore_md[c]] for c in allenatori}
+
 
 
 def primo_del_mese_dopo(giorno: date) -> date:
@@ -228,9 +220,134 @@ inizio_terzo_mese = primo_del_mese_dopo(inizio_prossimo_mese)
 vista = upcoming
 if filtro_cat != "tutti":
     vista = vista[vista["category_id"] == filtro_cat]
-if filtro_coach != "tutti":
-    vista = vista[vista["coach"].astype(str).str.strip() == filtro_coach]
-if periodo == "questa_settimana":
+
+# --- calendario cliccabile ---
+
+giorno_sel = st.session_state.get("giorno_pub")
+if giorno_sel:
+    if st.button("Mostra tutte le date disponibili", key="reset_giorno"):
+        st.session_state["giorno_pub"] = None
+        st.rerun()
+
+st.divider()
+
+# --- allenatori: una casella per ciascuno, tutte attive di partenza ---
+
+attivi = set(allenatori)
+if allenatori:
+    st.caption("Allenatori")
+    colonne_coach = st.columns(min(len(allenatori), 4))
+    for i, nome_coach in enumerate(allenatori):
+        col = colonne_coach[i % len(colonne_coach)]
+        if not col.checkbox(
+            f":{colore_md[nome_coach]}[{nome_coach}]",
+            value=True,
+            key=f"coach_{nome_coach}",
+        ):
+            attivi.discard(nome_coach)
+
+    vista = vista[vista["coach"].astype(str).str.strip().isin(attivi)]
+
+# il colore di ogni giorno dipende dagli allenatori che ci lavorano
+st.markdown(
+    """
+    <style>
+    div[class*="st-key-giorno_"] button:disabled { opacity:.30; }
+    div[class*="st-key-giorno_"] button[data-testid*="primary"] {
+        outline: 3px solid rgba(0,0,0,.55);
+        outline-offset: -3px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown("**Seleziona una data**")
+
+MESI = [
+    "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+    "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
+]
+
+if "mese_pub" not in st.session_state:
+    st.session_state["mese_pub"] = (oggi.year, oggi.month)
+if "giorno_pub" not in st.session_state:
+    st.session_state["giorno_pub"] = None
+
+k1, k2, k3 = st.columns([1, 4, 1])
+if k1.button("◀", key="mese_prev"):
+    a, m = st.session_state["mese_pub"]
+    st.session_state["mese_pub"] = (a - 1, 12) if m == 1 else (a, m - 1)
+if k3.button("▶", key="mese_next"):
+    a, m = st.session_state["mese_pub"]
+    st.session_state["mese_pub"] = (a + 1, 1) if m == 12 else (a, m + 1)
+
+anno_pub, mese_pub = st.session_state["mese_pub"]
+k2.markdown(
+    f"<div style='text-align:center;font-weight:600;padding-top:.45rem'>"
+    f"{MESI[mese_pub - 1]} {anno_pub}</div>",
+    unsafe_allow_html=True,
+)
+
+disponibili_giorno = {}
+coach_giorno = {}
+for d, c in zip(vista["date"], vista["coach"]):
+    if d.year == anno_pub and d.month == mese_pub:
+        disponibili_giorno[d.day] = disponibili_giorno.get(d.day, 0) + 1
+        coach_giorno.setdefault(d.day, set()).add(str(c).strip())
+
+# un colore per giorno: quello dell'allenatore, o metà e metà se condiviso
+regole = []
+for g, insieme in coach_giorno.items():
+    tinte = [colore_hex[c] for c in sorted(insieme) if c in colore_hex]
+    if len(tinte) == 1:
+        sfondo, bordo = tinte[0], tinte[0]
+    elif len(tinte) >= 2:
+        sfondo = (
+            f"linear-gradient(135deg, {tinte[0]} 0%, {tinte[0]} 49%, "
+            f"{tinte[1]} 51%, {tinte[1]} 100%)"
+        )
+        bordo = MISTO
+    else:
+        sfondo, bordo = MISTO, MISTO
+    regole.append(
+        f'div[class*="st-key-giorno_{anno_pub}_{mese_pub}_{g}"] '
+        f"button:not(:disabled) {{ background:{sfondo}; "
+        f"border:1px solid {bordo}; color:#fff; font-weight:600; }}"
+    )
+
+st.markdown("<style>" + "".join(regole) + "</style>", unsafe_allow_html=True)
+
+intestazioni = st.columns(7)
+for col, g in zip(intestazioni, ("lun", "mar", "mer", "gio", "ven", "sab", "dom")):
+    col.markdown(
+        f"<div style='text-align:center;font-size:.7rem;opacity:.6'>{g}</div>",
+        unsafe_allow_html=True,
+    )
+
+for settimana in calendar.monthcalendar(anno_pub, mese_pub):
+    colonne = st.columns(7)
+    for col, giorno in zip(colonne, settimana):
+        if giorno == 0:
+            col.write("")
+            continue
+        quanti = disponibili_giorno.get(giorno, 0)
+        scelto = giorno_sel == date(anno_pub, mese_pub, giorno)
+        if col.button(
+            f"{giorno}",
+            key=f"giorno_{anno_pub}_{mese_pub}_{giorno}",
+            disabled=quanti == 0,
+            use_container_width=True,
+            type="primary" if scelto else "secondary",
+        ):
+            st.session_state["giorno_pub"] = date(anno_pub, mese_pub, giorno)
+            st.rerun()
+
+if giorno_sel:
+    # il giorno scelto sul calendario ha la precedenza sul filtro «Periodo»
+    vista = vista[vista["date"] == giorno_sel]
+    st.caption(f"Giorno scelto: {giorno_sel.strftime('%d/%m/%Y')}")
+elif periodo == "questa_settimana":
     vista = vista[vista["date"] <= domenica]
 elif periodo == "prossima_settimana":
     vista = vista[
@@ -248,20 +365,26 @@ vista = vista.sort_values(["date", "time"])
 
 st.divider()
 
-GIORNI = {
+GIORNI_BREVI = {
+    0: "lun", 1: "mar", 2: "mer", 3: "gio", 4: "ven", 5: "sab", 6: "dom",
+}
+
+GIORNI_ESTESI = {
     0: "lunedì", 1: "martedì", 2: "mercoledì", 3: "giovedì",
     4: "venerdì", 5: "sabato", 6: "domenica",
 }
 
 
 def etichetta(row) -> str:
-    giorno = GIORNI[row.date.weekday()]
-    coach = f" con {row.coach}" if str(row.coach).strip() else ""
-    prezzo = f" — € {row.price_eur:.0f}" if row.price_eur else ""
-    stato = "" if row.capacity == 1 else f"  ·  _{row.free} posti_"
+    """Ora e data in due badge, poi allenatore e tipo di test."""
+    giorno = GIORNI_BREVI[row.date.weekday()]
+    coach = f"**{row.coach}** · " if str(row.coach).strip() else ""
+    prezzo = f" · € {row.price_eur:.0f}" if row.price_eur else ""
+    posti = "" if row.capacity == 1 else f" · {row.free} posti"
     return (
-        f"**{row.name}**{coach} — {giorno} {row.date.strftime('%d/%m/%Y')}, "
-        f"ore {row.time}{prezzo}{stato}"
+        f":blue-background[**{row.time}**] "
+        f":gray-background[{giorno} {row.date.strftime('%d/%m/%Y')}] "
+        f"&nbsp; {coach}{row.name}{prezzo}{posti}"
     )
 
 
@@ -274,12 +397,38 @@ if not disponibili:
 
 st.caption(f"{len(disponibili)} appuntamenti disponibili")
 
-choice = st.radio(
-    "Scegli lo slot",
-    options=disponibili,
-    format_func=etichetta,
-    label_visibility="collapsed",
-)
+# pulsanti larghi quanto la pagina, testo a sinistra, bordo del colore del coach
+regole_slot = [
+    'div[class*="st-key-slot_"] button { justify-content:flex-start; '
+    "text-align:left; padding:.55rem .8rem; }"
+]
+for r in disponibili:
+    tinta = colore_hex.get(str(r.coach).strip(), MISTO)
+    regole_slot.append(
+        f'div[class*="st-key-slot_{r.slot_id}"] button '
+        f"{{ border-left:5px solid {tinta}; }}"
+    )
+st.markdown("<style>" + "".join(regole_slot) + "</style>", unsafe_allow_html=True)
+
+slot_scelto = st.session_state.get("slot_pub")
+
+for row in disponibili:
+    if st.button(
+        etichetta(row),
+        key=f"slot_{row.slot_id}",
+        use_container_width=True,
+        type="primary" if slot_scelto == row.slot_id else "secondary",
+    ):
+        st.session_state["slot_pub"] = row.slot_id
+        st.rerun()
+
+scelti = [r for r in disponibili if r.slot_id == slot_scelto]
+if not scelti:
+    st.info("Scegli un orario per continuare.")
+    blocco_termini()
+    st.stop()
+
+choice = scelti[0]
 
 st.divider()
 
@@ -322,6 +471,24 @@ with st.form("booking_form"):
         "clausole su cancellazioni, rimborsi e penale (art. 1382 c.c.)."
     )
     st.caption("Trovi il testo completo in fondo alla pagina.")
+
+    # riepilogo di cosa si sta prenotando, subito sopra il pulsante
+    with st.container(border=True):
+        st.markdown(f"**{choice.name}**")
+        riepilogo = [
+            f"🗓️ {GIORNI_ESTESI[choice.date.weekday()]} "
+            f"{choice.date.strftime('%d/%m/%Y')} alle {choice.time}"
+        ]
+        if str(choice.coach).strip():
+            riepilogo.append(f"👤 Con {choice.coach}")
+        if choice.duration_min:
+            riepilogo.append(f"⏱️ Circa {int(choice.duration_min)} minuti")
+        if choice.location:
+            riepilogo.append(f"📍 {choice.location}")
+        if choice.price_eur:
+            riepilogo.append(f"💶 € {choice.price_eur:.2f}")
+        st.markdown("  \n".join(riepilogo))
+
     submitted = st.form_submit_button(
         "Conferma appuntamento", type="primary", disabled=pagamento_mancante
     )
@@ -331,7 +498,7 @@ if submitted:
     # nome e cognome: almeno due parole di due lettere, senza cifre
     parole = [p for p in re.split(r"\s+", name.strip()) if len(p) >= 2]
     if len(parole) < 2 or any(ch.isdigit() for ch in name):
-        st.error("Inserisci nome e cognome")
+        st.error("Inserisci nome e cognome.")
     elif "@" not in email or "." not in email.split("@")[-1]:
         st.error("Inserisci un indirizzo email valido.")
     elif len(cifre) < 8:
@@ -354,6 +521,7 @@ if submitted:
                 )
             else:
                 ref = data.add_booking(choice.slot_id, name, email, phone)
+                st.session_state["slot_pub"] = None
 
                 st.success(
                     f"Prenotato — {choice.name} il "

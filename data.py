@@ -343,6 +343,37 @@ def add_slot(
     )[0]
 
 
+def update_slot(
+    slot_id: str, date_str: str, time_str: str, category_id: str,
+    capacity: int = 1, note: str = "",
+) -> bool:
+    reali = _check_headers("slots", SLOT_COLUMNS)
+    ws = _sheet("slots")
+    col_id = reali.index("slot_id") + 1
+
+    cell = ws.find(str(slot_id).strip())
+    if cell is None or cell.col != col_id:
+        return False
+
+    valori = {
+        "slot_id": str(slot_id),
+        "date": date_str,
+        "time": time_str,
+        "category_id": str(category_id),
+        "capacity": int(capacity),
+        "note": str(note).strip(),
+    }
+    inizio = gspread.utils.rowcol_to_a1(cell.row, 1)
+    fine = gspread.utils.rowcol_to_a1(cell.row, len(reali))
+    ws.update(
+        f"{inizio}:{fine}",
+        [_row_for(reali, valori)],
+        value_input_option="USER_ENTERED",
+    )
+    load_slots.clear()
+    return True
+
+
 def delete_slot(slot_id: str) -> bool:
     col_id = _col_index("slots", "slot_id")
     ws = _sheet("slots")

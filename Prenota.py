@@ -8,7 +8,20 @@ import data
 import mailer
 
 st.set_page_config(
-    page_title="Prenota un appuntamento", layout="centered"
+    page_title="Valchiusella Mountail Lab", layout="centered"
+)
+
+st.markdown(
+    """
+    <style>
+    /* titolo sempre su una riga, dimensione proporzionale allo schermo */
+    h1 {
+        white-space: nowrap;
+        font-size: clamp(1.05rem, 4.4vw, 2.2rem) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 EMAIL_LAB = "valchiusellamountainlab@gmail.com"
@@ -96,7 +109,17 @@ if LOGO.exists():
     _, center, _ = st.columns([1, 2, 1])
     center.image(str(LOGO), use_container_width=True)
 
-st.title("Prenota un appuntamento")
+st.title("Benvenuto al Valchiusella Mountain Lab")
+st.markdown(
+    "Nel laboratorio di Traversella testiamo atleti per aiutarli a correre "
+    "più forte più lontano"
+)
+st.link_button(
+    "Maggiori informazioni sui test",
+    "https://ducoaching.substack.com/p/valchiusella-mountain-hub",
+)
+
+st.subheader("Prenota un appuntamento")
 
 
 def blocco_termini() -> None:

@@ -1,11 +1,146 @@
+import calendar
 import re
 from datetime import date, datetime, timedelta
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
 import data
 import mailer
+
+# =============================================================
+# HELPER CALENDARIO (usati da Calendario e Prenotazioni)
+# =============================================================
+
+MESI = [
+    "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+    "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
+]
+
+PALETTE = [
+    "#1e88e5", "#e53935", "#43a047", "#8e24aa", "#fb8c00",
+    "#00897b", "#c2185b", "#5e35b1", "#f9a825", "#546e7a",
+]
+GRIGIO = "#90a4ae"
+
+CSS_CALENDARIO = """
+<style>
+table.vml-cal { width:100%; border-collapse:collapse;
+    table-layout:fixed; font-size:.72rem; }
+table.vml-cal th { padding:.3rem; text-align:center;
+    font-weight:600; opacity:.7; font-size:.7rem; }
+table.vml-cal td { border:1px solid rgba(128,128,128,.28);
+    vertical-align:top; height:5.5rem; padding:.2rem; }
+table.vml-cal td.vml-vuoto { background:rgba(128,128,128,.07);
+    border-color:rgba(128,128,128,.14); }
+table.vml-cal td.vml-oggi { outline:2px solid rgba(66,133,244,.7);
+    outline-offset:-2px; }
+.vml-num { font-weight:700; opacity:.6; margin-bottom:.15rem; }
+.vml-chip { border-radius:3px; padding:.1rem .25rem; margin-bottom:.12rem;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+</style>
+"""
+
+
+def rgba(hex_colore: str, alpha: float) -> str:
+    h = hex_colore.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def colori_per_coach(categories) -> dict:
+    """Un colore per allenatore, stabile: dipende dall'elenco categorie."""
+    return {
+        c: PALETTE[i % len(PALETTE)]
+        for i, c in enumerate(data.coach_list(categories))
+    }
+
+
+def navigatore_mese(prefix: str):
+    """Barra ◀ Oggi ▶ con il mese condiviso fra le tab. Ritorna (anno, mese)."""
+    if "cal_mese" not in st.session_state:
+        _oggi = date.today()
+        st.session_state["cal_mese"] = (_oggi.year, _oggi.month)
+
+    n1, n2, n3, n4 = st.columns([1, 1, 4, 1])
+    if n1.button("◀", key=f"{prefix}_prev", help="Mese precedente"):
+        a, m = st.session_state["cal_mese"]
+        st.session_state["cal_mese"] = (a - 1, 12) if m == 1 else (a, m - 1)
+    if n2.button("Oggi", key=f"{prefix}_oggi"):
+        _oggi = date.today()
+        st.session_state["cal_mese"] = (_oggi.year, _oggi.month)
+    if n4.button("▶", key=f"{prefix}_next", help="Mese successivo"):
+        a, m = st.session_state["cal_mese"]
+        st.session_state["cal_mese"] = (a + 1, 1) if m == 12 else (a, m + 1)
+
+    anno, mese = st.session_state["cal_mese"]
+    n3.markdown(
+        f"<div style='text-align:center;font-weight:600;padding-top:.45rem'>"
+        f"{MESI[mese - 1]} {anno}</div>",
+        unsafe_allow_html=True,
+    )
+    return anno, mese
+
+
+def disegna_griglia(anno: int, mese: int, per_giorno: dict) -> None:
+    """per_giorno: {giorno: [(stato, colore, testo), ...]}.
+
+    stato: 'pieno' (tinta piena e grassetto), 'chiuso' (barrato),
+    qualsiasi altro valore = tinta tenue.
+    """
+    celle = []
+    for settimana in calendar.monthcalendar(anno, mese):
+        riga = []
+        for giorno in settimana:
+            if giorno == 0:
+                riga.append("<td class='vml-vuoto'></td>")
+                continue
+            chips = "".join(
+                "<div class='vml-chip' style='"
+                f"border-left:3px solid {colore};"
+                f"background:{rgba(colore, .30 if stato == 'pieno' else .10)};"
+                + ("font-weight:600;" if stato == "pieno" else "")
+                + ("opacity:.45;text-decoration:line-through;"
+                   if stato == "chiuso" else "")
+                + f"'>{testo}</div>"
+                for stato, colore, testo in per_giorno.get(giorno, [])
+            )
+            oggi_cls = (
+                " vml-oggi" if date(anno, mese, giorno) == date.today() else ""
+            )
+            riga.append(
+                f"<td class='vml-cella{oggi_cls}'>"
+                f"<div class='vml-num'>{giorno}</div>{chips}</td>"
+            )
+        celle.append("<tr>" + "".join(riga) + "</tr>")
+
+    st.markdown(CSS_CALENDARIO, unsafe_allow_html=True)
+    st.markdown(
+        "<table class='vml-cal'><tr>"
+        + "".join(
+            f"<th>{g}</th>"
+            for g in ("lun", "mar", "mer", "gio", "ven", "sab", "dom")
+        )
+        + "</tr>" + "".join(celle) + "</table>",
+        unsafe_allow_html=True,
+    )
+
+
+def legenda_coach(colore_coach: dict) -> None:
+    if not colore_coach:
+        return
+    legenda = " ".join(
+        f"<span style='display:inline-block;width:.6rem;height:.6rem;"
+        f"border-radius:50%;background:{colore};margin-right:.25rem'></span>"
+        f"<span style='margin-right:.9rem'>{escape(c)}</span>"
+        for c, colore in colore_coach.items()
+    )
+    st.markdown(
+        f"<div style='font-size:.75rem;opacity:.85'>{legenda}</div>",
+        unsafe_allow_html=True,
+    )
+
 
 st.title("🔒 Gestione")
 
@@ -151,19 +286,60 @@ with tab_cal:
         ]
         vista_slot.loc[vista_slot["slot_id"].isin(bloccati_cal), "liberi"] = 0
 
-        solo_futuri = st.checkbox("Solo slot futuri", value=True, key="slot_fut")
-        if solo_futuri:
-            vista_slot = vista_slot[vista_slot["date"] >= date.today()]
-        vista_slot = vista_slot.sort_values(["date", "time"])
-
-        st.dataframe(
-            vista_slot[[
-                "slot_id", "date", "time", "name", "coach", "stato",
-                "capacity", "prenotati", "liberi", "note",
-            ]],
-            use_container_width=True,
-            hide_index=True,
+        # ---------- filtro allenatore (vale per calendario ed elenco) ----------
+        coach_cal = ["tutti"] + sorted(
+            {str(c).strip() for c in vista_slot["coach"] if str(c).strip()}
         )
+        filtro_coach_cal = st.selectbox(
+            "Allenatore",
+            options=coach_cal,
+            format_func=lambda c: "Tutti gli allenatori" if c == "tutti" else c,
+            key="cal_coach",
+            disabled=len(coach_cal) < 3,
+        )
+        if filtro_coach_cal != "tutti":
+            vista_slot = vista_slot[
+                vista_slot["coach"].astype(str).str.strip() == filtro_coach_cal
+            ]
+
+        # ---------- vista calendario ----------
+        st.markdown("**Vista calendario**")
+
+        anno_cal, mese_cal = navigatore_mese("cal")
+        colore_coach = colori_per_coach(categories)
+
+        del_mese = vista_slot[
+            vista_slot["date"].map(
+                lambda d: d.year == anno_cal and d.month == mese_cal
+            )
+        ].sort_values(["date", "time"])
+
+        per_giorno = {}
+        for r in del_mese.itertuples(index=False):
+            coach_txt = f" · {r.coach}" if str(r.coach).strip() else ""
+            posti = "" if r.capacity == 1 else f" ({r.prenotati}/{r.capacity})"
+            stato = (
+                "pieno" if r.stato == "prenotato"
+                else "chiuso" if r.stato == "bloccato" else "libero"
+            )
+            per_giorno.setdefault(r.date.day, []).append((
+                stato,
+                colore_coach.get(str(r.coach).strip(), GRIGIO),
+                f"{r.time} {escape(str(r.name))}{escape(coach_txt)}{posti}",
+            ))
+
+        disegna_griglia(anno_cal, mese_cal, per_giorno)
+        legenda_coach(colore_coach)
+        st.caption(
+            "Colore = allenatore · tinta piena e grassetto = prenotato · "
+            "barrato = bloccato da una prenotazione sovrapposta — "
+            f"{len(del_mese)} slot in {MESI[mese_cal - 1].lower()}"
+        )
+
+        st.divider()
+        st.subheader("Modifica o elimina uno slot")
+
+        vista_slot = vista_slot.sort_values(["date", "time"])
 
         if not vista_slot.empty:
             def _label_slot(sid: str) -> str:
@@ -173,20 +349,131 @@ with tab_cal:
                     f"{r['name']} ({r['prenotati']}/{r['capacity']})"
                 )
 
-            st.markdown("**Elimina uno slot**")
-            sid_del = st.selectbox(
-                "Slot da eliminare",
-                options=list(vista_slot["slot_id"]),
-                format_func=_label_slot,
-                key="slot_del_sel",
-            )
-            conferma = st.checkbox("Confermo l'eliminazione", key="slot_del_ok")
-            if st.button("Elimina slot", key="slot_del_btn") and conferma:
-                if data.delete_slot(sid_del):
-                    st.success(f"{sid_del} eliminato.")
-                    st.rerun()
+            with st.expander("✏️ Modifica o elimina uno slot"):
+                sid_sel = st.selectbox(
+                    "Slot",
+                    options=list(vista_slot["slot_id"]),
+                    format_func=_label_slot,
+                    key="slot_edit_sel",
+                )
+                riga_slot = vista_slot[vista_slot["slot_id"] == sid_sel].iloc[0]
+
+                st.markdown("**Modifica**")
+                if riga_slot["prenotati"] > 0:
+                    st.info(
+                        "Questo slot ha già una prenotazione e non è modificabile. "
+                        "Per spostarlo annulla la prenotazione e reinseriscila, "
+                        "così il cliente riceve le email corrette."
+                    )
+                elif categories.empty:
+                    st.caption("Nessuna categoria disponibile.")
                 else:
-                    st.error("Slot non trovato.")
+                    ids_cat = list(categories["category_id"])
+                    idx_cat = (
+                        ids_cat.index(riga_slot["category_id"])
+                        if riga_slot["category_id"] in ids_cat else 0
+                    )
+                    with st.form(f"modifica_slot_{sid_sel}"):
+                        e1, e2 = st.columns(2)
+                        e_date = e1.date_input(
+                            "Data", value=riga_slot["date"],
+                            key=f"slot_e_date_{sid_sel}",
+                        )
+                        e_time = e2.text_input(
+                            "Ora (HH:MM)", value=str(riga_slot["time"]),
+                            key=f"slot_e_time_{sid_sel}",
+                        )
+                        e_cat = st.selectbox(
+                            "Tipo di test",
+                            options=ids_cat,
+                            index=idx_cat,
+                            format_func=_label_cat_new,
+                            key=f"slot_e_cat_{sid_sel}",
+                        )
+                        e3, e4 = st.columns(2)
+                        e_cap = e3.number_input(
+                            "Posti", min_value=1, max_value=50,
+                            value=int(riga_slot["capacity"]),
+                            key=f"slot_e_cap_{sid_sel}",
+                        )
+                        e_note = e4.text_input(
+                            "Nota interna", value=str(riga_slot["note"]),
+                            key=f"slot_e_note_{sid_sel}",
+                        )
+                        salva_slot = st.form_submit_button("Salva modifiche")
+
+                    if salva_slot:
+                        try:
+                            ora_new = datetime.strptime(
+                                e_time.strip(), "%H:%M"
+                            ).strftime("%H:%M")
+                        except ValueError:
+                            ora_new = None
+
+                        if ora_new is None:
+                            st.error(
+                                f"Orario non valido: «{e_time}». Usa il formato HH:MM."
+                            )
+                        else:
+                            _, bloccati_edit = data.check_new_slots(
+                                [(e_date, ora_new)], e_cat,
+                                slots[slots["slot_id"] != sid_sel],
+                                categories, bookings,
+                            )
+                            if bloccati_edit:
+                                st.error(
+                                    "Modifica non salvata: " + bloccati_edit[0][2]
+                                )
+                            elif data.update_slot(
+                                slot_id=sid_sel,
+                                date_str=e_date.isoformat(),
+                                time_str=ora_new,
+                                category_id=e_cat,
+                                capacity=int(e_cap),
+                                note=e_note,
+                            ):
+                                st.session_state["msg_slot"] = (
+                                    f"{sid_sel} aggiornato: "
+                                    f"{e_date.strftime('%d/%m/%Y')} alle {ora_new}."
+                                )
+                                st.rerun()
+                            else:
+                                st.error("Slot non trovato.")
+
+                st.divider()
+                st.markdown("**Elimina**")
+                if riga_slot["prenotati"] > 0:
+                    st.caption(
+                        "Eliminando lo slot la prenotazione resta nel foglio "
+                        "ma senza appuntamento: meglio annullarla prima."
+                    )
+                conferma = st.checkbox(
+                    f"Confermo l'eliminazione di {sid_sel}", key="slot_del_ok"
+                )
+                if st.button("Elimina slot", key="slot_del_btn") and conferma:
+                    if data.delete_slot(sid_sel):
+                        st.session_state["msg_slot"] = f"{sid_sel} eliminato."
+                        st.rerun()
+                    else:
+                        st.error("Slot non trovato.")
+
+        st.divider()
+        st.markdown("**Elenco slot**")
+
+        solo_futuri = st.checkbox("Solo slot futuri", value=True, key="slot_fut")
+        elenco = (
+            vista_slot[vista_slot["date"] >= date.today()]
+            if solo_futuri else vista_slot
+        )
+
+        st.dataframe(
+            elenco[[
+                "slot_id", "date", "time", "name", "coach", "stato",
+                "capacity", "prenotati", "liberi", "note",
+            ]],
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # =============================================================
 # PRENOTAZIONI
@@ -355,6 +642,23 @@ with tab_pren:
         )
         merged.loc[merged["paid"] != "si", "incassato"] = 0.0
         merged["rimborsato"] = merged["amount_refunded"].fillna(0.0)
+        merged["coach"] = merged["coach"].fillna("")
+
+        # ---------- filtro allenatore (vale per tutta la scheda) ----------
+        coach_pren = ["tutti"] + sorted(
+            {str(c).strip() for c in merged["coach"] if str(c).strip()}
+        )
+        filtro_coach_pren = st.selectbox(
+            "Allenatore",
+            options=coach_pren,
+            format_func=lambda c: "Tutti gli allenatori" if c == "tutti" else c,
+            key="pren_coach",
+            disabled=len(coach_pren) < 3,
+        )
+        if filtro_coach_pren != "tutti":
+            merged = merged[
+                merged["coach"].astype(str).str.strip() == filtro_coach_pren
+            ]
 
         active = merged[~merged["status"].isin(data.INACTIVE_STATUSES)]
         da_incassare = active[active["paid"] != "si"]
@@ -369,6 +673,46 @@ with tab_pren:
         c4.metric(
             "Future",
             int((active["date"] >= oggi).sum()) if not active.empty else 0,
+        )
+
+        # ---------- vista calendario ----------
+        st.divider()
+        st.markdown("**Vista calendario**")
+
+        anno_pren, mese_pren = navigatore_mese("pren")
+        colore_coach_pren = colori_per_coach(categories)
+
+        pren_mese = merged[
+            merged["date"].notna()
+            & merged["date"].map(
+                lambda d: d.year == anno_pren and d.month == mese_pren
+                if pd.notna(d) else False
+            )
+        ].sort_values(["date", "time"])
+
+        per_giorno_pren = {}
+        for r in pren_mese.itertuples(index=False):
+            if r.status in data.INACTIVE_STATUSES:
+                stato = "chiuso"
+            elif r.paid == "si":
+                stato = "pieno"
+            else:
+                stato = "aperto"
+            etichetta = f"{r.time} {escape(str(r.cliente))}"
+            if str(r.test).strip():
+                etichetta += f" · {escape(str(r.test))}"
+            per_giorno_pren.setdefault(r.date.day, []).append((
+                stato,
+                colore_coach_pren.get(str(r.coach).strip(), GRIGIO),
+                etichetta,
+            ))
+
+        disegna_griglia(anno_pren, mese_pren, per_giorno_pren)
+        legenda_coach(colore_coach_pren)
+        st.caption(
+            "Colore = allenatore · tinta piena e grassetto = incassata · "
+            "barrato = annullata o rimborsata — "
+            f"{len(pren_mese)} prenotazioni in {MESI[mese_pren - 1].lower()}"
         )
 
         def _giorni(serie) -> list[str]:
@@ -619,49 +963,48 @@ with tab_pren:
         # ANNULLAMENTO
         # =========================================================
         st.divider()
-        st.subheader("Annulla una prenotazione")
+        with st.expander("✖️ Annulla una prenotazione"):
+            if active.empty:
+                st.info("Niente da annullare.")
+            else:
+                def _label_pren(bid: str) -> str:
+                    r = active[active["booking_id"] == bid].iloc[0]
+                    giorno = (
+                        r["date"].strftime("%d/%m/%Y") if pd.notna(r["date"]) else "—"
+                    )
+                    return f"{bid} · {r['cliente']} · {giorno} {r['time']}"
 
-        if active.empty:
-            st.info("Niente da annullare.")
-        else:
-            def _label_pren(bid: str) -> str:
-                r = active[active["booking_id"] == bid].iloc[0]
-                giorno = (
-                    r["date"].strftime("%d/%m/%Y") if pd.notna(r["date"]) else "—"
+                code = st.selectbox(
+                    "Prenotazione",
+                    options=list(active["booking_id"]),
+                    format_func=_label_pren,
+                    key="pren_sel",
                 )
-                return f"{bid} · {r['cliente']} · {giorno} {r['time']}"
-
-            code = st.selectbox(
-                "Prenotazione",
-                options=list(active["booking_id"]),
-                format_func=_label_pren,
-                key="pren_sel",
-            )
-            avvisa = st.checkbox(
-                "Invia email di annullamento", value=True, key="pren_avvisa"
-            )
-            if st.button("Annulla", type="primary", key="pren_btn"):
-                row = merged[merged["booking_id"] == code]
-                if data.cancel_booking(code):
-                    st.success(f"{code} annullata.")
-                    if avvisa and not row.empty:
-                        r = row.iloc[0]
-                        try:
-                            mailer.send_cancellation(
-                                to=r["email"],
-                                name=r.get("cliente", ""),
-                                title=r.get("test", ""),
-                                date_str=(
-                                    r["date"].strftime("%d/%m/%Y")
-                                    if pd.notna(r.get("date")) else ""
-                                ),
-                                time_str=r.get("time", ""),
-                            )
-                        except Exception:
-                            st.warning("Annullata, ma l'email non è partita.")
-                    st.rerun()
-                else:
-                    st.error("Codice non trovato.")
+                avvisa = st.checkbox(
+                    "Invia email di annullamento", value=True, key="pren_avvisa"
+                )
+                if st.button("Annulla", type="primary", key="pren_btn"):
+                    row = merged[merged["booking_id"] == code]
+                    if data.cancel_booking(code):
+                        st.success(f"{code} annullata.")
+                        if avvisa and not row.empty:
+                            r = row.iloc[0]
+                            try:
+                                mailer.send_cancellation(
+                                    to=r["email"],
+                                    name=r.get("cliente", ""),
+                                    title=r.get("test", ""),
+                                    date_str=(
+                                        r["date"].strftime("%d/%m/%Y")
+                                        if pd.notna(r.get("date")) else ""
+                                    ),
+                                    time_str=r.get("time", ""),
+                                )
+                            except Exception:
+                                st.warning("Annullata, ma l'email non è partita.")
+                        st.rerun()
+                    else:
+                        st.error("Codice non trovato.")
 
 # =============================================================
 # CATEGORIE TEST
@@ -739,77 +1082,79 @@ with tab_tipi:
             coach = f" · {r['coach']}" if str(r["coach"]).strip() else ""
             return f"{cid} · {r['name']}{coach}"
 
-        st.markdown("**Modifica una categoria**")
-        cid_sel = st.selectbox(
-            "Categoria",
-            options=list(categories["category_id"]),
-            format_func=_label_cat,
-            key="cat_edit_sel",
-        )
-        row = categories[categories["category_id"] == cid_sel].iloc[0]
+        with st.expander("✏️ Modifica o elimina una categoria"):
+            st.markdown("**Modifica**")
+            cid_sel = st.selectbox(
+                "Categoria",
+                options=list(categories["category_id"]),
+                format_func=_label_cat,
+                key="cat_edit_sel",
+            )
+            row = categories[categories["category_id"] == cid_sel].iloc[0]
 
-        k = cid_sel  # chiavi diverse per ogni categoria: i campi si ricaricano
-        with st.form(f"modifica_tipo_{k}"):
-            e_name = st.text_input("Nome", value=row["name"], key=f"cat_e_name_{k}")
-            e_coach = st.text_input(
-                "Allenatore", value=row["coach"], key=f"cat_e_coach_{k}"
-            )
-            e_location = st.text_input(
-                "Luogo",
-                value=row["location"] or data.DEFAULT_LOCATION,
-                key=f"cat_e_location_{k}",
-            )
-            d1, d2 = st.columns(2)
-            e_duration = d1.number_input(
-                "Durata (minuti)", min_value=5, max_value=480,
-                value=int(row["duration_min"]) or 60, step=5, key=f"cat_e_dur_{k}",
-            )
-            e_price = d2.number_input(
-                "Prezzo €", min_value=0.0, value=float(row["price_eur"]),
-                step=5.0, key=f"cat_e_price_{k}",
-            )
-            e_link = st.text_input(
-                "Link di pagamento dell'allenatore",
-                value=row["payment_link"], key=f"cat_e_link_{k}",
-            )
-            e_desc = st.text_area(
-                "Descrizione", value=row["description"], key=f"cat_e_desc_{k}"
-            )
-            salva = st.form_submit_button("Salva modifiche")
-
-        if salva:
-            if not e_coach.strip():
-                st.error("L'allenatore è obbligatorio.")
-            elif data.update_category(
-                category_id=cid_sel,
-                name=e_name,
-                coach=e_coach,
-                location=e_location,
-                duration_min=int(e_duration),
-                price_eur=float(e_price),
-                payment_link=e_link,
-                description=e_desc,
-            ):
-                st.success("Categoria aggiornata.")
-                st.caption(
-                    "La modifica vale subito per tutti gli slot di questa "
-                    "categoria, anche quelli già pubblicati."
+            k = cid_sel  # chiavi diverse per ogni categoria: i campi si ricaricano
+            with st.form(f"modifica_tipo_{k}"):
+                e_name = st.text_input("Nome", value=row["name"], key=f"cat_e_name_{k}")
+                e_coach = st.text_input(
+                    "Allenatore", value=row["coach"], key=f"cat_e_coach_{k}"
                 )
-                st.rerun()
-            else:
-                st.error("Categoria non trovata.")
+                e_location = st.text_input(
+                    "Luogo",
+                    value=row["location"] or data.DEFAULT_LOCATION,
+                    key=f"cat_e_location_{k}",
+                )
+                d1, d2 = st.columns(2)
+                e_duration = d1.number_input(
+                    "Durata (minuti)", min_value=5, max_value=480,
+                    value=int(row["duration_min"]) or 60, step=5, key=f"cat_e_dur_{k}",
+                )
+                e_price = d2.number_input(
+                    "Prezzo €", min_value=0.0, value=float(row["price_eur"]),
+                    step=5.0, key=f"cat_e_price_{k}",
+                )
+                e_link = st.text_input(
+                    "Link di pagamento dell'allenatore",
+                    value=row["payment_link"], key=f"cat_e_link_{k}",
+                )
+                e_desc = st.text_area(
+                    "Descrizione", value=row["description"], key=f"cat_e_desc_{k}"
+                )
+                salva = st.form_submit_button("Salva modifiche")
 
-        st.markdown("**Elimina una categoria**")
-        cid_del = st.selectbox(
-            "Categoria da eliminare",
-            options=list(categories["category_id"]),
-            format_func=_label_cat,
-            key="cat_del_sel",
-        )
-        ok_del = st.checkbox("Confermo", key="cat_del_ok")
-        if st.button("Elimina categoria", key="cat_del_btn") and ok_del:
-            if data.delete_category(cid_del):
-                st.success(f"{cid_del} eliminata.")
-                st.rerun()
-            else:
-                st.error("Categoria non trovata.")
+            if salva:
+                if not e_coach.strip():
+                    st.error("L'allenatore è obbligatorio.")
+                elif data.update_category(
+                    category_id=cid_sel,
+                    name=e_name,
+                    coach=e_coach,
+                    location=e_location,
+                    duration_min=int(e_duration),
+                    price_eur=float(e_price),
+                    payment_link=e_link,
+                    description=e_desc,
+                ):
+                    st.success("Categoria aggiornata.")
+                    st.caption(
+                        "La modifica vale subito per tutti gli slot di questa "
+                        "categoria, anche quelli già pubblicati."
+                    )
+                    st.rerun()
+                else:
+                    st.error("Categoria non trovata.")
+
+            st.divider()
+            st.markdown("**Elimina**")
+            cid_del = st.selectbox(
+                "Categoria da eliminare",
+                options=list(categories["category_id"]),
+                format_func=_label_cat,
+                key="cat_del_sel",
+            )
+            ok_del = st.checkbox("Confermo", key="cat_del_ok")
+            if st.button("Elimina categoria", key="cat_del_btn") and ok_del:
+                if data.delete_category(cid_del):
+                    st.success(f"{cid_del} eliminata.")
+                    st.rerun()
+                else:
+                    st.error("Categoria non trovata.")

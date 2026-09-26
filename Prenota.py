@@ -11,6 +11,18 @@ import mailer
 st.set_page_config(
     page_title="Prenota un appuntamento", layout="centered"
 )
+st.markdown(
+    """
+    <style>
+    /* titolo sempre su una riga, dimensione proporzionale allo schermo */
+    h1 {
+        white-space: nowrap;
+        font-size: clamp(1.05rem, 4.4vw, 2.2rem) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 EMAIL_LAB = "valchiusellamountainlab@gmail.com"
 

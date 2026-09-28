@@ -1,6 +1,6 @@
 import calendar
 import re
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
@@ -112,7 +112,7 @@ if LOGO.exists():
 st.title("Benvenuto al Valchiusella Mountain Lab")
 st.markdown(
     "Nel laboratorio di Traversella testiamo atleti per aiutarli a correre "
-    "più forte più lontano"
+    "più forte e più lontano"
 )
 st.link_button(
     "Maggiori informazioni sui test",
@@ -173,35 +173,7 @@ if upcoming.empty:
     blocco_termini()
     st.stop()
 
-# --- filtri ---
-
-c1, c2 = st.columns(2)
-
-cat_options = ["tutti"] + sorted(upcoming["category_id"].unique().tolist())
-nomi_cat = dict(zip(upcoming["category_id"], upcoming["name"]))
-
-filtro_cat = c1.selectbox(
-    "Tipo di appuntamento",
-    options=cat_options,
-    format_func=lambda c: "Tutti" if c == "tutti" else nomi_cat.get(c, c),
-)
-
-periodo = c2.selectbox(
-    "Periodo",
-    options=[
-        "prossima_settimana", "questa_settimana",
-        "questo_mese", "prossimo_mese", "tutti",
-    ],
-    format_func=lambda p: {
-        "tutti": "Tutte le date",
-        "questa_settimana": "📅 Questa settimana",
-        "prossima_settimana": "📅 Prossima settimana",
-        "questo_mese": "🗓️ Questo mese",
-        "prossimo_mese": "🗓️ Prossimo mese",
-    }[p],
-)
-
-# --- allenatori: una casella per ciascuno, tutte attive di partenza ---
+# --- colori degli allenatori ---
 
 COLORI_MD = ["blue", "green", "orange", "violet"]
 COLORI_HEX = {
@@ -214,24 +186,8 @@ allenatori = sorted({str(c).strip() for c in upcoming["coach"] if str(c).strip()
 colore_md = {c: COLORI_MD[i % len(COLORI_MD)] for i, c in enumerate(allenatori)}
 colore_hex = {c: COLORI_HEX[colore_md[c]] for c in allenatori}
 
-
-
-def primo_del_mese_dopo(giorno: date) -> date:
-    """Primo giorno del mese successivo a quello di `giorno`."""
-    if giorno.month == 12:
-        return date(giorno.year + 1, 1, 1)
-    return date(giorno.year, giorno.month + 1, 1)
-
-
 oggi = date.today()
-lunedi = oggi - timedelta(days=oggi.weekday())
-domenica = lunedi + timedelta(days=6)
-inizio_prossimo_mese = primo_del_mese_dopo(oggi)
-inizio_terzo_mese = primo_del_mese_dopo(inizio_prossimo_mese)
-
 vista = upcoming
-if filtro_cat != "tutti":
-    vista = vista[vista["category_id"] == filtro_cat]
 
 # --- calendario cliccabile ---
 
@@ -243,24 +199,30 @@ if giorno_sel:
 
 st.divider()
 
-# --- allenatori: una casella per ciascuno, tutte attive di partenza ---
+# --- una casella per ogni test, tutte attive di partenza ---
 
-attivi = set(allenatori)
-if allenatori:
-    st.caption("Allenatori")
-    colonne_coach = st.container(key="caselle_coach").columns(
-        min(len(allenatori), 4)
-    )
-    for i, nome_coach in enumerate(allenatori):
-        col = colonne_coach[i % len(colonne_coach)]
-        if not col.checkbox(
-            f":{colore_md[nome_coach]}[{nome_coach}]",
-            value=True,
-            key=f"coach_{nome_coach}",
+test_disponibili = (
+    upcoming[["category_id", "name", "coach"]]
+    .drop_duplicates(subset="category_id")
+    .sort_values(["name", "coach"])
+)
+
+attive = set()
+if not test_disponibili.empty:
+    st.caption("Cosa vuoi prenotare")
+    contenitore_test = st.container(key="caselle_test")
+    for r in test_disponibili.itertuples(index=False):
+        coach = str(r.coach).strip()
+        colore = colore_md.get(coach, "gray")
+        etichetta_test = (
+            f"{r.name} — :{colore}[{coach}]" if coach else str(r.name)
+        )
+        if contenitore_test.checkbox(
+            etichetta_test, value=True, key=f"test_{r.category_id}"
         ):
-            attivi.discard(nome_coach)
+            attive.add(r.category_id)
 
-    vista = vista[vista["coach"].astype(str).str.strip().isin(attivi)]
+    vista = vista[vista["category_id"].isin(attive)]
 
 # il colore di ogni giorno dipende dagli allenatori che ci lavorano
 st.markdown(
@@ -291,14 +253,15 @@ st.markdown(
         margin-bottom: 0 !important;
     }
 
-    /* navigazione mese e caselle allenatori: niente impilamento */
-    div[class*="st-key-nav_mese"] div[data-testid="stHorizontalBlock"],
-    div[class*="st-key-caselle_coach"] div[data-testid="stHorizontalBlock"] {
+    /* navigazione mese: niente impilamento */
+    div[class*="st-key-nav_mese"] div[data-testid="stHorizontalBlock"] {
         flex-wrap: nowrap !important;
     }
-    div[class*="st-key-nav_mese"] div[data-testid="stColumn"],
-    div[class*="st-key-caselle_coach"] div[data-testid="stColumn"] {
+    div[class*="st-key-nav_mese"] div[data-testid="stColumn"] {
         min-width: 0 !important;
+    }
+    div[class*="st-key-caselle_test"] div[data-testid="stElementContainer"] {
+        margin-bottom: .1rem !important;
     }
     </style>
     """,
@@ -387,22 +350,8 @@ for n_settimana, settimana in enumerate(calendar.monthcalendar(anno_pub, mese_pu
             st.rerun()
 
 if giorno_sel:
-    # il giorno scelto sul calendario ha la precedenza sul filtro «Periodo»
     vista = vista[vista["date"] == giorno_sel]
     st.caption(f"Giorno scelto: {giorno_sel.strftime('%d/%m/%Y')}")
-elif periodo == "questa_settimana":
-    vista = vista[vista["date"] <= domenica]
-elif periodo == "prossima_settimana":
-    vista = vista[
-        (vista["date"] > domenica) & (vista["date"] <= domenica + timedelta(days=7))
-    ]
-elif periodo == "questo_mese":
-    vista = vista[vista["date"] < inizio_prossimo_mese]
-elif periodo == "prossimo_mese":
-    vista = vista[
-        (vista["date"] >= inizio_prossimo_mese)
-        & (vista["date"] < inizio_terzo_mese)
-    ]
 
 vista = vista.sort_values(["date", "time"])
 

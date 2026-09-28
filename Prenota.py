@@ -1,6 +1,6 @@
 import calendar
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -168,8 +168,36 @@ upcoming = upcoming[~upcoming["slot_id"].isin(bloccati)]
 # solo slot con posti liberi: quelli pieni non vengono mostrati affatto
 upcoming = upcoming[upcoming["free"] > 0]
 
+# le prenotazioni si chiudono qualche ora prima dell'appuntamento
+ORE_PREAVVISO = 48
+limite_prenotazione = datetime.now() + timedelta(hours=ORE_PREAVVISO)
+
+
+def inizio_slot(giorno, orario):
+    """datetime di inizio dello slot, o None se l'ora non è leggibile."""
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            ora = datetime.strptime(str(orario).strip(), fmt).time()
+        except ValueError:
+            continue
+        return datetime.combine(giorno, ora)
+    return None
+
+
+def prenotabile(giorno, orario) -> bool:
+    inizio = inizio_slot(giorno, orario)
+    return inizio is not None and inizio >= limite_prenotazione
+
+
+upcoming = upcoming[[
+    prenotabile(d, t) for d, t in zip(upcoming["date"], upcoming["time"])
+]]
+
 if upcoming.empty:
-    st.info("Al momento non ci sono slot liberi. Riprova tra qualche giorno.")
+    st.info(
+        "Al momento non ci sono slot prenotabili. Le prenotazioni si chiudono "
+        f"{ORE_PREAVVISO} ore prima dell'appuntamento: riprova tra qualche giorno."
+    )
     blocco_termini()
     st.stop()
 
@@ -387,7 +415,10 @@ if not disponibili:
     blocco_termini()
     st.stop()
 
-st.caption(f"{len(disponibili)} appuntamenti disponibili")
+st.caption(
+    f"{len(disponibili)} appuntamenti disponibili · le prenotazioni si chiudono "
+    f"{ORE_PREAVVISO} ore prima"
+)
 
 # pulsanti larghi quanto la pagina, testo a sinistra, bordo del colore del coach
 regole_slot = [
@@ -508,6 +539,11 @@ if submitted:
             elif data.count_live(choice.slot_id) >= choice.capacity:
                 st.error("Qualcuno ha appena preso questo slot. Scegline un altro.")
                 data.load_bookings.clear()
+            elif not prenotabile(choice.date, choice.time):
+                st.error(
+                    f"Le prenotazioni si chiudono {ORE_PREAVVISO} ore prima "
+                    "dell'appuntamento. Scegli un altro slot."
+                )
             elif data.conflict_live(choice.slot_id):
                 st.error(
                     "Il laboratorio è appena stato prenotato in questo orario. "

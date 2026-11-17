@@ -1,5 +1,6 @@
 import calendar
 import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from html import escape
 
@@ -549,6 +550,11 @@ with tab_pren:
 
             if crea_man:
                 cifre_man = re.sub(r"\D", "", m_phone)
+                # ripulisce copia-incolla: ＠ larghe, caratteri invisibili, mailto:, <>
+                _testo_mail = unicodedata.normalize("NFKC", m_email)
+                _testo_mail = re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", _testo_mail)
+                _trovata = re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", _testo_mail)
+                email_man = _trovata.group(0).lower() if _trovata else ""
                 try:
                     ora_man = datetime.strptime(
                         m_time.strip(), "%H:%M"
@@ -558,8 +564,11 @@ with tab_pren:
 
                 if not m_name.strip():
                     st.error("Inserisci nome e cognome.")
-                elif "@" not in m_email or "." not in m_email.split("@")[-1]:
-                    st.error("Inserisci un indirizzo email valido.")
+                elif not email_man:
+                    st.error(
+                        f"Indirizzo email non valido: {m_email!r}. "
+                        "Prova a riscriverlo a mano invece di incollarlo."
+                    )
                 elif len(cifre_man) < 8:
                     st.error("Inserisci un numero di telefono valido.")
                 elif ora_man is None:
@@ -580,7 +589,7 @@ with tab_pren:
                                 m_note.strip() or "inserita a mano",
                             )])[0]
                             ref_man = data.add_booking(
-                                sid, m_name, m_email, m_phone
+                                sid, m_name, email_man, m_phone
                             )
                             if m_incassata:
                                 data.mark_paid_bulk({ref_man: float(m_price)})
@@ -588,7 +597,7 @@ with tab_pren:
                             errori_man = {}
                             if m_mail:
                                 errori_man = mailer.send_booking_emails(
-                                    to=m_email,
+                                    to=email_man,
                                     name=m_name.strip(),
                                     title=cat_man["name"],
                                     date_str=m_date.strftime("%d/%m/%Y"),

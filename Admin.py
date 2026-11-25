@@ -194,6 +194,16 @@ with tab_cal:
                 f"· € {r['price_eur']:.0f}"
             )
 
+        GIORNI_SETT = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
+
+        # fuori dal form: cambiando modalità si aggiornano i campi sotto
+        modo_giorni = st.radio(
+            "Come scegli i giorni",
+            ["Giorni a scelta", "Intervallo e giorni della settimana"],
+            horizontal=True,
+            key="slot_modo",
+        )
+
         with st.form("nuovi_slot"):
             s_cat = st.selectbox(
                 "Tipo di test",
@@ -201,25 +211,62 @@ with tab_cal:
                 format_func=_label_cat_new,
                 key="slot_cat",
             )
-            c1, c2 = st.columns(2)
-            s_date = c1.date_input("Data", value=date.today(), key="slot_date")
-            s_cap = c2.number_input(
-                "Posti per slot", min_value=1, max_value=50, value=1, key="slot_cap"
-            )
+
+            if modo_giorni == "Giorni a scelta":
+                _oggi = date.today()
+                s_days = st.multiselect(
+                    "Giorni",
+                    options=[_oggi + timedelta(days=i) for i in range(366)],
+                    default=[_oggi],
+                    format_func=lambda d: (
+                        f"{GIORNI_SETT[d.weekday()]} {d.strftime('%d/%m/%Y')}"
+                    ),
+                    key="slot_days",
+                    placeholder="Scegli o scrivi le date (es. 12/12)",
+                    help="Puoi selezionare quanti giorni vuoi, anche non consecutivi.",
+                )
+            else:
+                r1, r2 = st.columns(2)
+                s_dal = r1.date_input("Dal", value=date.today(), key="slot_dal")
+                s_al = r2.date_input(
+                    "Al", value=date.today() + timedelta(weeks=4), key="slot_al"
+                )
+                s_wd = st.multiselect(
+                    "Giorni della settimana",
+                    options=list(range(7)),
+                    default=[date.today().weekday()],
+                    format_func=lambda i: GIORNI_SETT[i],
+                    key="slot_wd",
+                )
+
             s_times = st.text_input(
                 "Orari (separati da virgola)",
                 value="09:00, 10:30, 14:00",
                 key="slot_times",
             )
-            c3, c4 = st.columns(2)
-            s_weeks = c3.number_input(
-                "Ripeti per N settimane", min_value=0, max_value=52, value=0,
-                key="slot_weeks", help="0 = solo questa data",
+            c1, c2 = st.columns(2)
+            s_cap = c1.number_input(
+                "Posti per slot", min_value=1, max_value=50, value=1, key="slot_cap"
             )
-            s_note = c4.text_input("Nota interna (facoltativa)", key="slot_note")
+            s_note = c2.text_input("Nota interna (facoltativa)", key="slot_note")
             crea_slot = st.form_submit_button("Crea slot", type="primary")
 
         if crea_slot:
+            errore_giorni = None
+            if modo_giorni == "Giorni a scelta":
+                giorni = sorted(set(s_days))
+            elif s_al < s_dal:
+                giorni = []
+                errore_giorni = "La data «Al» è precedente alla data «Dal»."
+            else:
+                giorni = [
+                    s_dal + timedelta(days=i)
+                    for i in range((s_al - s_dal).days + 1)
+                    if (s_dal + timedelta(days=i)).weekday() in s_wd
+                ]
+            if not giorni and not errore_giorni:
+                errore_giorni = "Seleziona almeno un giorno."
+
             orari = []
             errore = None
             for raw in s_times.split(","):
@@ -232,16 +279,14 @@ with tab_cal:
                     errore = token
                     break
 
-            if errore:
+            if errore_giorni:
+                st.error(errore_giorni)
+            elif errore:
                 st.error(f"Orario non valido: «{errore}». Usa il formato HH:MM.")
             elif not orari:
                 st.error("Inserisci almeno un orario.")
             else:
-                candidati = [
-                    (s_date + timedelta(weeks=w), t)
-                    for w in range(int(s_weeks) + 1)
-                    for t in orari
-                ]
+                candidati = [(d, t) for d in giorni for t in orari]
                 ok, bloccati = data.check_new_slots(
                     candidati, s_cat, slots, categories, bookings
                 )
